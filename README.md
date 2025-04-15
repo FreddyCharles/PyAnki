@@ -1,63 +1,351 @@
-# PyAnki CSV - Simple Flashcard Review App
 
-A graphical flashcard application built with Python and CustomTkinter. It uses CSV files to manage decks and implements a basic Spaced Repetition System (SRS) for scheduling reviews, inspired by Anki.
+# PyAnki CSV - Enhanced SRS + Mgmt
 
-## Features
+![Python Version](https://img.shields.io/badge/python-3.7+-blue.svg)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) <!-- Choose your license -->
+[![status: active](https://img.shields.io/badge/status-active-success.svg)]() <!-- Or beta, wip, etc. -->
 
-*   **GUI Interface:** Modern-looking interface using CustomTkinter.
-*   **CSV-Based Decks:** Stores flashcard decks as simple `.csv` files.
-*   **Deck Management:** Automatically finds `.csv` decks in a `decks` folder. Allows selecting and reloading decks.
-*   **Spaced Repetition System (SRS):** Implements a basic SRS algorithm to schedule card reviews based on user feedback (Again, Hard, Good, Easy).
-*   **Due Card Review:** Only shows cards that are scheduled for review today or are overdue.
-*   **Card Adding:** Allows adding new cards to the currently selected deck via a simple dialog.
-*   **Automatic Saving:** Saves review progress and new cards automatically to the CSV file.
-*   **Error Handling:** Provides feedback for common issues like missing files, incorrect CSV formats, or directory errors.
+**PyAnki CSV** is a desktop Spaced Repetition System (SRS) application inspired by Anki, but using simple CSV files for deck storage. It features a modern graphical user interface built with CustomTkinter, an SM-2 based algorithm for scheduling reviews, support for LaTeX-style math rendering (using Matplotlib), deck statistics, and card management capabilities.
+
+---
+
+**Note:** This project is not affiliated with the official Anki SRS software. It provides a standalone, CSV-based alternative workflow.
+
+---
+
+## Table of Contents
+
+*   [Screenshots](#screenshots) <!-- Add this section once you have images -->
+*   [Key Features](#key-features)
+*   [Why PyAnki CSV?](#why-pyanki-csv)
+*   [Dependencies](#dependencies)
+*   [Installation](#installation)
+*   [File Structure](#file-structure)
+    *   [Decks Folder](#decks-folder)
+    *   [CSV File Format](#csv-file-format)
+*   [Usage](#usage)
+    *   [Launching the Application](#launching-the-application)
+    *   [Loading Decks](#loading-decks)
+    *   [Reviewing Cards](#reviewing-cards)
+    *   [Managing Cards](#managing-cards)
+    *   [Viewing Statistics](#viewing-statistics)
+    *   [Keyboard Shortcuts](#keyboard-shortcuts)
+    *   [Saving Data](#saving-data)
+*   [SRS Algorithm Details](#srs-algorithm-details)
+*   [Math Rendering](#math-rendering)
+*   [Configuration](#configuration)
+*   [Contributing](#contributing)
+*   [License](#license)
+*   [Acknowledgements](#acknowledgements)
+
+---
 
 ## Screenshots
 
-*(Consider adding screenshots of the main window and the 'Add Card' dialog here if possible)*
+*(Please add screenshots of your application here! Showing the main review window, the card browser, and the statistics window would be very helpful for users.)*
 
-**Main Window:**
-[Image Placeholder: Description of the main window showing deck selection, card display area, and control buttons]
+*Example:*
+*   `(Image: Main review interface)`
+*   `(Image: Card Management / Browser window)`
+*   `(Image: Statistics window with plot)`
 
-**Add Card Dialog:**
-[Image Placeholder: Description of the 'Add New Card' pop-up window]
+---
 
-## Requirements
+## Key Features
 
-*   **Python:** Version 3.7 or higher recommended (due to type hints and f-strings).
-*   **CustomTkinter:** The library used for the GUI.
-*   **Standard Libraries:** `csv`, `datetime`, `random`, `os`, `sys`, `tkinter` (Tkinter base is usually included with Python).
+*   **CSV-Based:** Uses simple, human-readable `.csv` files to store flashcard decks. Easy to edit externally if needed.
+*   **Modern GUI:** Clean and responsive user interface using the [CustomTkinter](https://github.com/TomSchimansky/CustomTkinter) library. Adapts to system light/dark modes.
+*   **Spaced Repetition System (SRS):** Implements an SM-2 algorithm variant to schedule card reviews efficiently based on recall difficulty.
+*   **Math Rendering:** Supports rendering LaTeX-style mathematical notation within card text using Matplotlib's `mathtext` (requires Matplotlib and Pillow). Use `$...$` for math expressions (e.g., `What is $E=mc^2$?`).
+*   **Card Management:** Browse, search, add, edit, and delete cards across loaded decks via a dedicated management window.
+*   **Deck Statistics:** View detailed statistics about your decks, including card counts (new, learning, mature), review forecasts, interval/ease distribution, and review history (requires Matplotlib for plotting).
+*   **Multi-Deck Loading:** Load and review cards from multiple decks simultaneously.
+*   **Cross-Platform:** Should run on Windows, macOS, and Linux where Python and the required libraries are installed.
+
+---
+
+## Why PyAnki CSV?
+
+This project was created for users who:
+
+*   Prefer the simplicity and portability of CSV files over database formats.
+*   Want a standalone desktop SRS application without needing external services.
+*   Need basic math rendering capabilities within their flashcards.
+*   Appreciate a modern, theme-aware user interface.
+
+It offers core SRS functionality with useful management tools in a self-contained Python script.
+
+---
+
+## Dependencies
+
+*   **Python:** 3.7+
+*   **CustomTkinter:** For the graphical user interface.
+*   **Pillow (PIL Fork):** **Optional, but required for Math Rendering.** Used to process images generated by Matplotlib.
+*   **Matplotlib:** **Optional, but required for Math Rendering and Statistics Plotting.** Used for rendering math equations and plotting forecast graphs.
+
+---
 
 ## Installation
 
-1.  **Clone or Download:** Get the Python script (`your_script_name.py` - replace with the actual filename).
-2.  **Install CustomTkinter:** Open your terminal or command prompt and run:
+1.  **Clone or Download:** Get the project files:
     ```bash
-    pip install customtkinter
+    git clone https://github.com/your-username/PyAnki-CSV.git # Replace with your repo URL
+    cd PyAnki-CSV
     ```
-3.  **Create Decks Folder:** The script expects flashcard decks (as `.csv` files) to be inside a folder named `decks` located in the *same directory* as the script. If the `decks` folder doesn't exist when you first run the script, it will attempt to create it.
+    Alternatively, download the `PyAnki.py` script directly.
 
-## CSV File Format
+2.  **Install Dependencies:**
+    *   **Required:**
+        ```bash
+        pip install customtkinter
+        ```
+    *   **Optional (for Math Rendering & Stats Plotting):**
+        ```bash
+        pip install Pillow matplotlib
+        ```
+    *(Note: On some systems, you might need `pip3` instead of `pip`)*
 
-Your flashcard decks must be saved as `.csv` files inside the `decks` directory. Each CSV file represents one deck.
+3.  **Prepare Decks:** Create a folder named `decks` in the same directory as `PyAnki.py`. Place your `.csv` deck files inside this folder (see [CSV File Format](#csv-file-format)). If the `decks` folder doesn't exist, the application will create it with an `example_deck.csv` file on first run.
 
-**Required Columns:**
+---
 
-The CSV file **must** have at least the following columns in the header row:
+## File Structure
 
-1.  `front`: The text to display on the front of the card.
-2.  `back`: The text to display on the back of the card.
-3.  `next_review_date`: The date the card is scheduled for review next.
-    *   Format: **YYYY-MM-DD** (e.g., `2023-10-27`). This format is defined by `DATE_FORMAT` in the script.
-    *   An empty value or an invalid date format means the card is due immediately.
-4.  `interval_days`: A number (float) representing the current interval (in days) before the card should be shown again after a successful review ('Good' or 'Easy').
-    *   An empty value or an invalid number will default to `INITIAL_INTERVAL_DAYS` (usually 1.0).
+```
+PyAnki-CSV/
+│
+├── PyAnki.py           # The main application script
+│
+├── decks/              # Folder containing your CSV deck files
+│   ├── deck1.csv
+│   ├── another_deck.csv
+│   └── example_deck.csv # Created automatically if folder is missing
+│
+└── README.md           # This file
+```
 
-**Example `my_deck.csv`:**
+### Decks Folder
+
+*   The application looks for `.csv` files exclusively within the `decks` subfolder.
+*   Create this folder manually or let the application create it on the first run.
+*   Place your deck files (one deck per CSV) inside this folder.
+
+### CSV File Format
+
+Each `.csv` file represents a deck. The file **must** contain at least the following header columns:
+
+*   `front`: The text for the front of the card.
+*   `back`: The text for the back of the card.
+*   `next_review_date`: The date the card is next due for review (Format: `YYYY-MM-DD`). Leave empty for new cards (they will be due immediately).
+*   `interval_days`: The current interval (in days) between reviews. Use `0.0` or leave empty for new cards.
+
+The application also manages the following **optional** SRS-related columns. If they exist, their values will be used; otherwise, defaults will be applied, and the columns will be added/updated when the deck is saved.
+
+*   `ease_factor`: A number representing how easy the card is (default: `2.5`). Determines interval increases.
+*   `lapses`: The number of times the card review was failed ('Again').
+*   `reviews`: The total number of times the card has been reviewed (excluding lapses).
+
+**Example `example_deck.csv`:**
 
 ```csv
-front,back,next_review_date,interval_days,notes,tags
-"Capital of France","Paris",2023-11-05,4.5,"Geography","Europe capitals"
-"print() function","Outputs text to the console",2023-10-26,1.0,"Python Basics","programming python built-in"
-"What is H2O?","Water","",1.0,"Chemistry","basic science"
+front,back,next_review_date,interval_days,ease_factor,lapses,reviews
+"What is the capital of France?",Paris,2023-10-27,3.5,2.5,0,2
+"Chemical symbol for Water",H₂O,,,2.5,0,0
+"Solve $x^2 + 5x + 6 = 0$","$(x+2)(x+3)=0$, so $x=-2$ or $x=-3$",2023-11-15,10.0,2.65,1,5
+"Another Card","Card Back Text",,,2.5,0,0
+```
+
+**Notes:**
+
+*   The application uses UTF-8 encoding (`utf-8-sig` for reading to handle potential BOM).
+*   Headers are case-sensitive.
+*   Empty rows or rows missing `front` or `back` content might be skipped.
+*   Invalid `next_review_date` formats will cause the card to be treated as due immediately.
+*   Any additional columns in your CSV will be preserved when the application saves the file.
+
+---
+
+## Usage
+
+### Launching the Application
+
+Run the script from your terminal:
+
+```bash
+python PyAnki.py
+```
+
+*(Or `python3 PyAnki.py` depending on your system setup)*
+
+### Loading Decks
+
+1.  The main window displays a list of `.csv` files found in the `decks` folder.
+2.  Select one or more decks from the list (use `Ctrl+Click` or `Shift+Click` for multiple selections).
+3.  Click the **"Load Selected Deck(s)"** button.
+4.  The application will load the cards and present the first due card for review (if any).
+
+### Reviewing Cards
+
+1.  The **front** of the current due card is displayed.
+2.  Click the **"Show Answer (Space/Enter)"** button or press `Spacebar` / `Enter` to reveal the back of the card.
+3.  The **back** of the card is shown, along with four rating buttons:
+    *   **Again (1):** You failed to recall the answer. The card will be shown again soon in the current session, and its ease factor decreases.
+    *   **Hard (2):** You recalled the answer, but with significant difficulty. The interval increases slightly, and ease may decrease.
+    *   **Good (3 / Space / Enter):** You recalled the answer correctly. The interval increases based on the current ease factor. (Default action for `Space`/`Enter` after showing answer).
+    *   **Easy (4):** You recalled the answer very easily. The interval increases significantly, and the ease factor increases.
+4.  Click the button or press the corresponding number key (`1`, `2`, `3`, `4`) that best reflects your recall difficulty.
+5.  The application updates the card's schedule and shows the next due card.
+6.  The process repeats until all due cards for the session are reviewed.
+
+### Managing Cards
+
+Click the **"Manage Cards"** button (enabled after loading a deck) to open the Card Browser window. Here you can:
+
+*   **View All Cards:** See all cards from the currently loaded deck(s) in a sortable table.
+*   **Search:** Filter cards by typing in the search box (searches Front and Back fields).
+*   **Sort:** Click column headers to sort cards by Deck, Front, Back, Next Review, Interval, etc.
+*   **Add Card (A):** Click "Add New Card" to open a window to add a new card to the *first* loaded deck.
+*   **Edit Card:** Select a *single* card and click "Edit Selected" to modify its Front and Back content.
+*   **Delete Card(s):** Select one or more cards and click "Delete Selected" (confirmation required).
+
+### Viewing Statistics
+
+Click the **"Stats"** button (enabled after loading a deck) to open the Statistics window. This shows:
+
+*   **Deck Overview:** Total cards, breakdown by state (New, Learning, Young, Mature).
+*   **Scheduling:** Cards due Today, Tomorrow, and in the next 7 days.
+*   **Intervals:** Average and longest intervals.
+*   **Ease:** Average ease factor and distribution.
+*   **Review History:** Total reviews, lapses, averages per card.
+*   **Forecast Plot:** A graph showing the number of cards due each day for the next 30 days (requires Matplotlib).
+
+### Keyboard Shortcuts
+
+*   **Review Screen:**
+    *   `Space` or `Enter`: Show Answer / Rate as "Good" (3)
+    *   `1`: Rate as "Again"
+    *   `2`: Rate as "Hard"
+    *   `3`: Rate as "Good"
+    *   `4`: Rate as "Easy"
+*   **Main Window:**
+    *   `A`: Open Add Card window (if a deck is loaded).
+*   **Pop-up Windows (Add, Edit, Stats, Manage):**
+    *   `Escape`: Close the current pop-up window.
+    *   `Enter`: Often confirms the default action (e.g., Add Card, Save Changes).
+
+### Saving Data
+
+*   Card review progress (updated `next_review_date`, `interval_days`, `ease_factor`, etc.) is marked internally as needing saving.
+*   Changes are automatically saved to the corresponding CSV file(s) when:
+    *   You load *different* deck(s).
+    *   You close the application.
+    *   You add, edit, or delete cards via the Manage Cards window.
+*   If cards are deleted, the entire corresponding CSV file is rewritten to remove them. Otherwise, only modified cards trigger a save, usually updating the file in place.
+
+**Recommendation:** While the app saves automatically, it's always wise to back up your `decks` folder periodically.
+
+---
+
+## SRS Algorithm Details
+
+The scheduling algorithm is inspired by SM-2, using Ease Factors and Intervals:
+
+*   **New Cards:** Start with an interval of 0 and the `DEFAULT_EASE_FACTOR` (2.5). First 'Good' rating gives `INITIAL_INTERVAL_DAYS` (1 day). 'Easy' gives 4 days.
+*   **Ease Factor:** Represents card difficulty. Starts at 2.5.
+    *   Decreases significantly for 'Again' (`EASE_MODIFIER_AGAIN`).
+    *   Decreases slightly for 'Hard' (`EASE_MODIFIER_HARD`).
+    *   Increases for 'Easy' (`EASE_MODIFIER_EASY`).
+    *   Stays the same for 'Good'.
+    *   Has a minimum value (`MINIMUM_EASE_FACTOR`, 1.3).
+*   **Interval:** The time (in days) until the next review.
+    *   Calculated roughly as `Previous Interval * Ease Factor`.
+    *   'Hard' reviews use a smaller multiplier (`INTERVAL_MODIFIER_HARD`).
+    *   'Easy' reviews get an additional bonus multiplier (`INTERVAL_MODIFIER_EASY_BONUS`).
+    *   Intervals generally increase with each successful review (except potentially 'Hard').
+    *   Has a minimum value after review (`MINIMUM_INTERVAL_DAYS`, 1 day).
+*   **Lapses ('Again'):**
+    *   Increases the lapse count.
+    *   Reduces the ease factor.
+    *   Resets the interval based on `LAPSE_INTERVAL_FACTOR` or `LAPSE_NEW_INTERVAL_DAYS` (defaults to 1 day).
+
+The specific parameters controlling this behaviour can be found in the [Configuration](#configuration) section at the top of `PyAnki.py`.
+
+---
+
+## Math Rendering
+
+*   Requires `Pillow` and `Matplotlib` to be installed.
+*   Enclose LaTeX-style math expressions within single dollar signs (`$...$`).
+    *   Example: `The formula is $E = mc^2$.`
+*   The application uses Matplotlib's `mathtext` engine to render the expression as an image, which is then displayed in the card label.
+*   Complex layouts or unsupported LaTeX commands might not render correctly. Basic mathematical symbols, fractions, superscripts, subscripts, Greek letters, etc., are generally supported.
+*   If rendering fails, an error message might be printed to the console, and the original text (with `$`) will be shown on the card with a "[Math Render Error]" prefix.
+*   The rendering resolution can be adjusted via the `MATH_RENDER_DPI` constant.
+
+---
+
+## Configuration
+
+Several parameters controlling the application's behaviour are defined as constants near the top of the `PyAnki.py` script:
+
+*   `DATE_FORMAT`: String format for dates in CSV ("%Y-%m-%d").
+*   `DECKS_DIR`: Name of the subdirectory containing CSV decks ("decks").
+*   `INITIAL_INTERVAL_DAYS`: Interval after the first 'Good' rating on a new card (1.0).
+*   `MINIMUM_INTERVAL_DAYS`: Smallest interval allowed after a successful review (1.0).
+*   `STATS_FORECAST_DAYS`: Number of days shown in the statistics forecast plot (30).
+*   `MATH_RENDER_DPI`: Resolution for rendered math images (150).
+*   **SRS Parameters:**
+    *   `DEFAULT_EASE_FACTOR` (2.5)
+    *   `MINIMUM_EASE_FACTOR` (1.3)
+    *   `EASE_MODIFIER_AGAIN` (-0.20)
+    *   `EASE_MODIFIER_HARD` (-0.15)
+    *   `EASE_MODIFIER_EASY` (+0.15)
+    *   `INTERVAL_MODIFIER_HARD` (1.2)
+    *   `INTERVAL_MODIFIER_EASY_BONUS` (1.3)
+    *   `LAPSE_INTERVAL_FACTOR` (0.0) - Multiplier for lapsed interval (0 uses `LAPSE_NEW_INTERVAL_DAYS`).
+    *   `LAPSE_NEW_INTERVAL_DAYS` (1.0) - Fixed interval after lapse if factor is 0.
+
+**Caution:** Modifying SRS parameters can significantly affect scheduling. Do so only if you understand the implications.
+
+---
+
+## Contributing
+
+Contributions are welcome! If you'd like to contribute, please consider:
+
+1.  **Reporting Bugs:** Open an issue detailing the problem, including steps to reproduce it.
+2.  **Suggesting Features:** Open an issue to discuss new ideas.
+3.  **Submitting Pull Requests:**
+    *   Fork the repository.
+    *   Create a new branch for your feature or bug fix (`git checkout -b feature/your-feature-name`).
+    *   Make your changes.
+    *   Ensure your code is clean and follows a similar style.
+    *   Test your changes thoroughly.
+    *   Commit your changes (`git commit -m 'Add some feature'`).
+    *   Push to the branch (`git push origin feature/your-feature-name`).
+    *   Open a Pull Request.
+
+---
+
+## License
+
+This project is licensed under the [MIT License](LICENSE.txt) <!-- Create a LICENSE.txt file with the MIT license text -->. See the `LICENSE.txt` file for details.
+
+---
+
+## Acknowledgements
+
+*   [CustomTkinter](https://github.com/TomSchimansky/CustomTkinter) for the excellent modern Tkinter widgets.
+*   [Matplotlib](https://matplotlib.org/) for plotting and math text rendering.
+*   [Pillow](https://python-pillow.org/) for image handling.
+*   The developers of the original [Anki](https://apps.ankiweb.net/) SRS for the inspiration and the SM-2 algorithm concept.
+
+```
+
+**Next Steps for You:**
+
+1.  **Add Screenshots:** Take screenshots of your application in action and embed them in the designated section.
+2.  **Choose a License:** Decide on a license (MIT is a common choice for open source). Create a `LICENSE.txt` file in your repository containing the full license text and update the link/badge in the README if necessary.
+3.  **Update Repository URL:** Replace `https://github.com/your-username/PyAnki-CSV.git` with the actual URL of your GitHub repository.
+4.  **Review and Refine:** Read through the generated README to ensure it accurately reflects your project and is easy to understand. Adjust wording as needed.
