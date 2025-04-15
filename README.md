@@ -1,9 +1,4 @@
-Okay, I will merge the two sections about CSV formatting into a single, comprehensive section under "File Structure". I'll use the more detailed content from the second section ("CSV File Format Guide") as the base and ensure all essential points from the first section are included, while removing the redundancy of the repeated "File Structure" diagram and "Decks Folder" explanation from the second part.
-
-Here is the revised `README.md` content with the merged section:
-
-```markdown
-# PyAnki CSV - Enhanced SRS + Mgmt
+# PyAnki - Enhanced SRS + Mgmt
 
 ![Python Version](https://img.shields.io/badge/python-3.7+-blue.svg)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) <!-- Choose your license -->
