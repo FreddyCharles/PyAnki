@@ -438,10 +438,11 @@ def _cleanup_mathtext(text: str) -> str:
     """Attempts to clean up common issues in mathtext strings before rendering."""
     # Remove backticks inside $...$
     def remove_backticks(match):
-        return match.group(1).replace('`', '')
-    # Use non-greedy matching for the content within $...$
-    # Handle potential escaped dollars \$
-    cleaned_text = re.sub(r"\$(.*?)\$", remove_backticks, text)
+        content = match.group(1)
+        cleaned_content = content.replace('`', '')
+        return f"${cleaned_content}$"
+    # This regex looks for a $ not preceded by \, captures everything until the next $ not preceded by \, non-greedily
+    cleaned_text = re.sub(r"(?<!\\)\$(.*?)(?<!\\)\$", remove_backticks, text)
     return cleaned_text
 
 def render_math_to_image(text: str, text_color: str, bg_color: str, dpi: int = MATH_RENDER_DPI) -> Optional[Image.Image]:
@@ -449,32 +450,60 @@ def render_math_to_image(text: str, text_color: str, bg_color: str, dpi: int = M
     if not MATPLOTLIB_AVAILABLE or not PIL_AVAILABLE: return None
     if '$' not in text: return None
 
+    fig = None # Initialize fig to None for error handling
     try:
         # Attempt to clean up potential issues like backticks inside math mode
         cleaned_text = _cleanup_mathtext(text)
 
-        fig = plt.figure(figsize=(8, 1), dpi=dpi, facecolor=bg_color)
+        # --- Add check for empty/whitespace-only math content ---
+        # Find content within the first pair of non-escaped dollars
+        match = re.search(r"(?<!\\)\$(.*?)(?<!\\)\$", cleaned_text)
+        if match:
+            math_content = match.group(1).strip()
+            # If the *entire* cleaned string is just the math part and its content is empty/whitespace, skip rendering
+            if not math_content and cleaned_text.strip() == match.group(0).strip():
+                 # print(f"Skipping rendering for whitespace/empty math: '{text}'") # Debug
+                 return None
+        # --- End check ---
+
+        # --- Simplified Sizing ---
+        # Use a reasonably large initial figure size, especially vertically
+        # Let savefig with bbox_inches='tight' handle cropping
+        fig = plt.figure(figsize=(8, 4), dpi=dpi, facecolor=bg_color) # Increased height guess
+        # --- End Simplified Sizing ---
+
         # Use the cleaned text for rendering
         text_obj = fig.text(0.5, 0.5, cleaned_text, ha='center', va='center', fontsize=12, color=text_color, wrap=True)
-        fig.canvas.draw()
-        bbox = text_obj.get_window_extent(renderer=fig.canvas.get_renderer())
-        padding_inches = 0.1
-        req_width = max((bbox.width / dpi) + 2 * padding_inches, 0.3)
-        req_height = max((bbox.height / dpi) + 2 * padding_inches, 0.3)
-        fig.set_size_inches(req_width, req_height)
-        text_obj.set_position((0.5, 0.5)); text_obj.set_text(cleaned_text) # Re-center with cleaned text
+
+        # --- Removed Dynamic Resizing Logic ---
+        # fig.canvas.draw()
+        # bbox = text_obj.get_window_extent(renderer=fig.canvas.get_renderer())
+        # padding_inches = 0.1
+        # req_width = max((bbox.width / dpi) + 2 * padding_inches, 0.3)
+        # req_height = max((bbox.height / dpi) + 2 * padding_inches, 0.3)
+        # fig.set_size_inches(req_width, req_height)
+        # text_obj.set_position((0.5, 0.5)); text_obj.set_text(cleaned_text)
+        # --- End Removed Dynamic Resizing Logic ---
 
         buf = io.BytesIO()
-        fig.savefig(buf, format='png', dpi=dpi, facecolor=bg_color, edgecolor='none', bbox_inches='tight', pad_inches=padding_inches)
+        # Use bbox_inches='tight' to crop whitespace
+        fig.savefig(buf, format='png', dpi=dpi, facecolor=bg_color, edgecolor='none', bbox_inches='tight', pad_inches=0.1)
         buf.seek(0)
-        plt.close(fig)
+        plt.close(fig) # Close the figure explicitly
+        fig = None # Ensure fig is None after closing
         image = Image.open(buf)
         return image
     except Exception as e:
-        # Print original text if cleaned version failed
-        print(f"Error rendering math text (original: '{text}'): {e}")
-        try: plt.close(fig)
-        except: pass
+        # Print original and cleaned text if rendering failed
+        print(f"Error rendering math text.")
+        print(f"  Original: '{text}'")
+        if 'cleaned_text' in locals(): # Only print if cleanup happened
+            print(f"  Cleaned:  '{cleaned_text}'")
+        print(f"  Error:    {e}")
+        # Ensure figure is closed even if error occurred after creation
+        if fig is not None:
+            try: plt.close(fig)
+            except: pass
         return None
 
 
@@ -680,9 +709,9 @@ class FlashcardApp(ctk.CTk):
                  if pil_image:
                       ctk_image = CTkImage(light_image=pil_image, dark_image=pil_image, size=(pil_image.width, pil_image.height))
                       self._math_image_cache[cache_key] = ctk_image
-                 else: ctk_image = None; content = f"[Math Render Error]\n{content}"
+                 else: ctk_image = None; content = f"[Math Render Error]\n{content}" # Show original content if render fails
              if ctk_image: label.configure(image=ctk_image, text=""); return
-         label.configure(text=content, image=None)
+         label.configure(text=content, image=None) # Fallback or no math
 
     def display_card(self):
         """Updates the UI to show the current card's front."""
@@ -1042,16 +1071,45 @@ class FlashcardApp(ctk.CTk):
     def _setup_shortcuts(self): self.bind("<KeyPress>", self._handle_keypress)
     def _handle_keypress(self, event):
         active_grab = self.grab_current()
-        if active_grab and active_grab != self and event.widget.winfo_toplevel() == active_grab: return # Let modal handle keys
-        if active_grab and active_grab != self: return # Ignore keys if grab is elsewhere
+        # If a modal window (like Add/Edit/Manage) has the grab, let it handle the keypress
+        if active_grab and active_grab != self and hasattr(active_grab, 'focus_get') and active_grab.focus_get():
+             # Check if the event widget belongs to the grabbed window
+             widget_toplevel = event.widget.winfo_toplevel()
+             if widget_toplevel == active_grab:
+                  # print(f"Key '{event.keysym}' handled by grabbed window: {active_grab.title()}")
+                  return # Let the modal handle its own keys
+             # else: Fall through, maybe main window shortcut? (Less likely with grab)
+
+        # If grab is active but not on the focused widget's window (unlikely but possible), ignore
+        if active_grab and active_grab != self:
+             # print("Ignoring keypress, grab active elsewhere.")
+             return
+
+        # --- Process main window shortcuts ---
         key_sym = event.keysym; is_space = key_sym == "space"; is_return = key_sym == "Return"; is_a = key_sym.lower() == "a"
-        if is_a and self.add_card_button.cget("state") == "normal": self.open_add_card_window(); return
+
+        # Add Card Shortcut (only if button enabled)
+        if is_a and self.add_card_button.cget("state") == "normal":
+            self.open_add_card_window(); return # Consume event
+
+        # Review Shortcuts (only if review active)
         if not self._is_review_active: return
+
         if is_space or is_return:
-            if self.showing_answer: self.rate_card(3)
+            # Prevent triggering buttons if they have focus
+            focused_widget = self.focus_get()
+            if isinstance(focused_widget, (ctk.CTkButton, tk.Button, ttk.Button)):
+                 # Let the button handle its default space/enter action
+                 return
+
+            # Otherwise, handle review action
+            if self.showing_answer: self.rate_card(3) # Rate Good
             else: self.show_answer()
-            return
-        if key_sym in ('1', '2', '3', '4') and self.showing_answer: self.rate_card(int(key_sym)); return
+            return # Consume event
+
+        if key_sym in ('1', '2', '3', '4') and self.showing_answer:
+             self.rate_card(int(key_sym)); return # Consume event
+
 
     def on_close(self):
         """Handles the main window closing event."""
