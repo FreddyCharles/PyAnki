@@ -200,6 +200,8 @@ Understanding the CSV format is key to creating decks compatible with PyAnki CSV
     *   Verify UTF-8 encoding is selected in the save options.
     *   Be careful that the software doesn't automatically change date formats or number formats in ways incompatible with the application. Set date columns to `YYYY-MM-DD` format explicitly if possible.
 *   **Text Editors:** When using a plain text editor, manually ensure commas separate fields and use double quotes (`"..."`) around fields containing commas, newlines, or double quotes themselves.
+*   **Tips for making Flashcards:** Dont refer to any specific examples or pictures without giving the full relevent information in that specific card. If refering to an example question make sure to give the full question for each flashcard refering to it otherwise don't refer to it.
+*   **Extra info:** Make sure not to use any extra/unnecessary syntax like breaklines
 
 **Example `my_deck.csv`:**
 
