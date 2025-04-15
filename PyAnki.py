@@ -8,6 +8,7 @@ import os
 import sys
 import io # For handling image data in memory
 import math # For ceiling function in interval calculation
+import re # For cleaning up math text
 import tkinter as tk # Base tkinter for listbox & messagebox
 from tkinter import ttk # For Treeview (card browser)
 from tkinter import messagebox # For showing errors/info
@@ -433,21 +434,35 @@ def calculate_deck_statistics(deck_data: List[Dict[str, Any]], forecast_days: in
 
 
 # --- Math Rendering Function ---
+def _cleanup_mathtext(text: str) -> str:
+    """Attempts to clean up common issues in mathtext strings before rendering."""
+    # Remove backticks inside $...$
+    def remove_backticks(match):
+        return match.group(1).replace('`', '')
+    # Use non-greedy matching for the content within $...$
+    # Handle potential escaped dollars \$
+    cleaned_text = re.sub(r"\$(.*?)\$", remove_backticks, text)
+    return cleaned_text
+
 def render_math_to_image(text: str, text_color: str, bg_color: str, dpi: int = MATH_RENDER_DPI) -> Optional[Image.Image]:
     """Renders text (potentially with Matplotlib mathtext) to a PIL Image."""
     if not MATPLOTLIB_AVAILABLE or not PIL_AVAILABLE: return None
     if '$' not in text: return None
 
     try:
+        # Attempt to clean up potential issues like backticks inside math mode
+        cleaned_text = _cleanup_mathtext(text)
+
         fig = plt.figure(figsize=(8, 1), dpi=dpi, facecolor=bg_color)
-        text_obj = fig.text(0.5, 0.5, text, ha='center', va='center', fontsize=12, color=text_color, wrap=True)
+        # Use the cleaned text for rendering
+        text_obj = fig.text(0.5, 0.5, cleaned_text, ha='center', va='center', fontsize=12, color=text_color, wrap=True)
         fig.canvas.draw()
         bbox = text_obj.get_window_extent(renderer=fig.canvas.get_renderer())
         padding_inches = 0.1
         req_width = max((bbox.width / dpi) + 2 * padding_inches, 0.3)
         req_height = max((bbox.height / dpi) + 2 * padding_inches, 0.3)
         fig.set_size_inches(req_width, req_height)
-        text_obj.set_position((0.5, 0.5)); text_obj.set_text(text)
+        text_obj.set_position((0.5, 0.5)); text_obj.set_text(cleaned_text) # Re-center with cleaned text
 
         buf = io.BytesIO()
         fig.savefig(buf, format='png', dpi=dpi, facecolor=bg_color, edgecolor='none', bbox_inches='tight', pad_inches=padding_inches)
@@ -456,7 +471,8 @@ def render_math_to_image(text: str, text_color: str, bg_color: str, dpi: int = M
         image = Image.open(buf)
         return image
     except Exception as e:
-        print(f"Error rendering math text: {e}")
+        # Print original text if cleaned version failed
+        print(f"Error rendering math text (original: '{text}'): {e}")
         try: plt.close(fig)
         except: pass
         return None

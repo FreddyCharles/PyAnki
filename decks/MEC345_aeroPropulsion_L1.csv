@@ -1,21 +1,12 @@
 front,back,next_review_date,interval_days,notes,tags,ease_factor,lapses,reviews
-Course Code & Title,AER/MEC345 Aerospace Propulsion,2023-10-27,1.0,,AER_MEC345;Introduction,2.5,0,0
 Main Propulsion Systems Covered,"Gas turbines, RAM-jets, Solid and liquid fuelled rocket engines.",2023-10-27,1.0,,AER_MEC345;Introduction,2.5,0,0
 Underlying Principles for Propulsion Systems,Principles of fluid mechanics and thermodynamics.,2023-10-27,1.0,,AER_MEC345;Introduction;Principles,2.5,0,0
 Additional Aspects Considered (Beyond Operation),"Pressures for improved performance, fundamental design, and operating context (atmospheric, economic, environmental).",2023-10-27,1.0,,AER_MEC345;Introduction;Context,2.5,0,0
-Textbook: Gas Turbine Theory,"Gas Turbine Theory by H.I.H. Saravanamuttoo, G.F.C. Rogers, H. Cohen, P Straznicky.",2023-10-27,1.0,,AER_MEC345;Resources,2.5,0,0
-Textbook: Jet Propulsion Fundamentals,Fundamentals of Jet Propulsion with Applications by P. G. Hill and C. R Peterson.,2023-10-27,1.0,,AER_MEC345;Resources,2.5,0,0
-Textbook: Rocket Propulsion,"Rocket Propulsion Elements by George P. Sutton, Oscar Biblarz.",2023-10-27,1.0,,AER_MEC345;Resources,2.5,0,0
-AER/MEC345 Module Outline Topics,"Introduction, Brayton Cycle, Gas Turbine (Components: Intakes, Compressors, Combustion, Turbines, Exhausts, Reheat), RAM-jet/SCRAM-Jet engines, Rocket Engines (Liquid, Solid/Hybrid), Rocket flight performance.",2023-10-27,1.0,,AER_MEC345;Introduction;Outline,2.5,0,0
 Key Gas Turbine Components Discussed,"Intakes, nozzles, compressors (centrifugal, axial), combustion, turbines (axial, radial), turbine cooling, environmental impact.",2023-10-27,1.0,,AER_MEC345;GasTurbine;Components,2.5,0,0
 Engine Types Covered (Besides basic Gas Turbine),"Turbojet, Turbofan, Turboprop, RAM-jet, Rocket Engines (liquid, solid/hybrid).",2023-10-27,1.0,,AER_MEC345;Engines;Types,2.5,0,0
 Performance Aspects Discussed,"Thermodynamic cycle efficiency, overall efficiency, component efficiencies, stage loading, velocity triangles, rocket flight performance.",2023-10-27,1.0,,AER_MEC345;Performance,2.5,0,0
-Recommended Lecture Learning Approach,"Attend lectures, take supplementary notes (slides are summaries), revisit slides after each lecture.",2023-10-27,1.0,,AER_MEC345;StudySkills,2.5,0,0
-Provided Resources,"Lecture presentations (before lecture), lecture slides (notes only, need background reading), formal tutorial sheets, discussion forum.",2023-10-27,1.0,,AER_MEC345;Resources,2.5,0,0
-Module Assessment Method,2-hour invigilated online exam.,2023-10-27,1.0,,AER_MEC345;Assessment,2.5,0,0
-Purpose of Feedback/Tutorial Sessions,"Optional sessions to discuss concepts, get feedback, ask questions, and work on tutorial sheets.",2023-10-27,1.0,,AER_MEC345;Resources;Feedback,2.5,0,0
 Main Components of a Turboprop (Diagram: Page 14),"Propeller (Prop), Compressor, Combustion Chamber, Turbine, Exhaust.",2023-10-27,1.0,,AER_MEC345;Engines;Turboprop;Components,2.5,0,0
-What drives the compressor in a basic jet engine?,The turbine.,2023-10-27,1.0,,AER_MEC345;GasTurbine;Operation,2.5,0,0
+What drives the compressor in a basic jet engine?,The turbine.,2025-04-16,1.0,,AER_MEC345;GasTurbine;Operation,2.5,0,1
 How are the compressor and turbine typically linked?,They are mounted on the same drive shaft.,2023-10-27,1.0,,AER_MEC345;GasTurbine;Operation,2.5,0,0
 What does 'multi-spool' mean in jet engines?,"Multiple compressor/turbine sets rotating independently on concentric shafts at different speeds (e.g., LP and HP spools).",2023-10-27,1.0,,AER_MEC345;GasTurbine;Turbofan;Design,2.5,0,0
 How do jet engines generate thrust (Newton's Laws)?,By increasing the momentum of the working fluid (air/combustion products) - accelerating it rearwards.,2023-10-27,1.0,,AER_MEC345;Thrust;Principles,2.5,0,0
@@ -27,7 +18,7 @@ When might exit pressure ($`P_{exit}`$) differ from atmospheric pressure ($`P_{a
 How do rocket engines differ from air-breathing engines regarding reactants?,Rocket engines carry both fuel AND oxidant onboard; air-breathing engines use atmospheric air as the oxidant.,2023-10-27,1.0,,AER_MEC345;Engines;RocketEngine;Principles,2.5,0,0
 Where does combustion occur in a rocket engine?,"In the combustion chamber, after fuel and oxidant are injected and mixed.",2023-10-27,1.0,,AER_MEC345;Engines;RocketEngine;Components,2.5,0,0
 What causes the high exhaust velocity in rocket engines?,"Chemical energy release (enthalpy release) from combustion is converted into kinetic energy, accelerating the combustion products through a nozzle, often to supersonic speeds.",2023-10-27,1.0,,AER_MEC345;Engines;RocketEngine;Principles,2.5,0,0
-How do rocket engines generate thrust?,Through the change of momentum of the high-velocity expelled combustion products (propellants).,2023-10-27,1.0,,AER_MEC345;Thrust;RocketEngine;Principles,2.5,0,0
+How do rocket engines generate thrust?,Through the change of momentum of the high-velocity expelled combustion products (propellants).,2025-04-16,1.0,,AER_MEC345;Thrust;RocketEngine;Principles,2.5,0,1
 What components pump fuel and oxidant in many liquid rocket engines?,"Turbopumps (pumps driven by a turbine), which allow high pressures and flow rates.",2023-10-27,1.0,,AER_MEC345;Engines;RocketEngine;LiquidFuel;Components,2.5,0,0
 How are propellants prepared for combustion in a liquid rocket engine?,They are atomised (sprayed) via injectors and mixed thoroughly in/before the combustion chamber.,2023-10-27,1.0,,AER_MEC345;Engines;RocketEngine;LiquidFuel;Operation,2.5,0,0
 Common method for cooling liquid rocket engine nozzles?,Regenerative cooling: using the fuel or oxidant as a coolant circulating through channels in the nozzle wall before combustion.,2023-10-27,1.0,,AER_MEC345;Engines;RocketEngine;LiquidFuel;Design,2.5,0,0
