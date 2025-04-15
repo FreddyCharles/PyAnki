@@ -49,6 +49,19 @@ MINIMUM_INTERVAL_DAYS = 1.0
 STATS_FORECAST_DAYS = 30 # How many days into the future to show in stats plot
 MATH_RENDER_DPI = 150 # Resolution for rendered math images
 
+# --- Color Name to Hex Mapping (for Matplotlib compatibility) ---
+# Add more if needed based on theme usage
+GRAY_NAME_TO_HEX = {
+    "gray10": "#1A1A1A",
+    "gray17": "#2B2B2B",
+    "gray20": "#333333",
+    "gray28": "#474747",
+    "gray65": "#A6A6A6",
+    "gray81": "#CFCFCF",
+    "gray86": "#DBDBDB",
+}
+
+
 # --- Core Logic Functions ---
 
 def parse_date(date_str: str) -> Optional[datetime.date]:
@@ -637,18 +650,24 @@ class FlashcardApp(ctk.CTk):
 
     # Helper to get the correct color tuple element based on appearance mode
     def _apply_appearance_mode(self, color: Any) -> str:
-        """Gets the light or dark mode color string from a CTk color tuple or returns string directly."""
+        """
+        Gets the light or dark mode color string from a CTk color tuple
+        or returns string directly. Converts known gray names to hex for Matplotlib.
+        """
+        color_str = ""
         if isinstance(color, (list, tuple)) and len(color) >= 2:
             # 0 is light mode, 1 is dark mode
             mode_index = 1 if ctk.get_appearance_mode().lower() == "dark" else 0
-            # Handle cases where one mode might be None (though unlikely in default themes)
-            return color[mode_index] if color[mode_index] is not None else "#000000" # Fallback
+            color_str = color[mode_index] if color[mode_index] is not None else "#000000" # Fallback if None
         elif isinstance(color, str):
-             return color # Already a single color string
+             color_str = color # Already a single color string
         else:
              # Fallback if color format is unexpected (e.g., None)
              print(f"Warning: Unexpected color format '{color}'. Using fallback.")
-             return "#FFFFFF" if ctk.get_appearance_mode().lower() == "light" else "#000000"
+             color_str = "#FFFFFF" if ctk.get_appearance_mode().lower() == "light" else "#000000"
+
+        # Convert known gray names to hex for better Matplotlib compatibility
+        return GRAY_NAME_TO_HEX.get(color_str, color_str)
 
 
     # --- UI Update Methods ---
