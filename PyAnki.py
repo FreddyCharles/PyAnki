@@ -6,17 +6,48 @@ import datetime
 import random
 import os
 import sys
+import io # For handling image data in memory
 import tkinter as tk # Base tkinter for listbox & messagebox
 from tkinter import messagebox # For showing errors/info
 import customtkinter as ctk # Use CustomTkinter for modern widgets
+from customtkinter import CTkImage # To display rendered math images
 from typing import List, Dict, Any, Optional, Tuple
+from collections import Counter, defaultdict
+
+# --- Pillow Dependency ---
+try:
+    from PIL import Image, ImageTk
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
+    print("Warning: Pillow library not found. Math rendering will be disabled.")
+    print("Install it using: pip install Pillow")
+
+
+# --- Matplotlib Integration ---
+try:
+    import matplotlib
+    matplotlib.use('Agg') # Use Agg backend for non-interactive image generation
+    import matplotlib.pyplot as plt
+    from matplotlib.figure import Figure
+    from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+    MATPLOTLIB_AVAILABLE = True
+    # Configure Matplotlib for mathtext
+    matplotlib.rcParams['mathtext.fontset'] = 'stix' # Or 'cm', 'stixsans', etc.
+    matplotlib.rcParams['font.family'] = 'STIXGeneral' # Match font set if possible
+except ImportError:
+    MATPLOTLIB_AVAILABLE = False
+    print("Warning: Matplotlib not found. Statistics plotting and Math rendering will be disabled.")
+    print("Install it using: pip install matplotlib")
 
 # --- Configuration ---
 DATE_FORMAT = "%Y-%m-%d"
 DECKS_DIR = "decks"
-APP_NAME = "PyAnki CSV - MultiDeck"
+APP_NAME = "PyAnki CSV - MultiDeck (with Stats & Math)"
 INITIAL_INTERVAL_DAYS = 1.0
 MINIMUM_INTERVAL_DAYS = 1.0
+STATS_FORECAST_DAYS = 30 # How many days into the future to show in stats plot
+MATH_RENDER_DPI = 150 # Resolution for rendered math images
 
 # --- Core Logic Functions ---
 
@@ -27,14 +58,15 @@ def parse_date(date_str: str) -> Optional[datetime.date]:
         return datetime.datetime.strptime(date_str.strip(), DATE_FORMAT).date()
     except ValueError:
         print(f"Warning: Invalid date format '{date_str}'. Treating as due.")
-        return None
+        return None # Treat invalid format as due today
 
 def parse_interval(interval_str: str) -> float:
     """Safely parses an interval string into a float."""
     if not interval_str: return INITIAL_INTERVAL_DAYS
     try:
         interval = float(interval_str.strip())
-        return max(MINIMUM_INTERVAL_DAYS, interval)
+        # Allow zero interval for new cards, but enforce minimum for reviews
+        return max(0.0, interval) if interval == 0 else max(MINIMUM_INTERVAL_DAYS, interval)
     except ValueError:
         print(f"Warning: Invalid interval '{interval_str}'. Using default {INITIAL_INTERVAL_DAYS} days.")
         return INITIAL_INTERVAL_DAYS
@@ -73,12 +105,27 @@ def load_deck(filepath: str) -> List[Dict[str, Any]]:
                          print(f"Warning: Skipping row {line_num} in '{os.path.basename(filepath)}' due to missing front or back.")
                          continue
 
-                    next_review_date = parse_date(row.get('next_review_date', ''))
-                    interval_days = parse_interval(row.get('interval_days', ''))
+                    # Handle potentially empty date/interval more robustly
+                    next_review_date_str = row.get('next_review_date', '').strip()
+                    interval_str = row.get('interval_days', '').strip()
+
+                    next_review_date = parse_date(next_review_date_str)
+                    # If date is empty or invalid, treat as new (due now)
+                    is_new = not next_review_date_str or next_review_date is None
+
+                    # If interval is empty or invalid, use default. If card is new, use 0.
+                    interval_days = INITIAL_INTERVAL_DAYS # Default
+                    if is_new:
+                        interval_days = 0.0 # New cards have 0 interval until first review
+                        next_review_date = datetime.date.today() # New cards are due today
+                    elif interval_str: # Only parse if interval exists and card isn't new
+                         interval_days = parse_interval(interval_str)
+
 
                     card = {
                         'front': front, 'back': back,
-                        'next_review_date': next_review_date, 'interval_days': interval_days,
+                        'next_review_date': next_review_date,
+                        'interval_days': interval_days,
                         'original_row_index': line_num, '_dirty': False
                         # Filepath added by caller
                     }
@@ -97,11 +144,12 @@ def load_deck(filepath: str) -> List[Dict[str, Any]]:
 
     return deck
 
+
 def save_deck(filepath: str, deck_to_save: List[Dict[str, Any]]):
     """Saves the provided list of cards back to the specified CSV file path."""
     # Check if any card in this specific subset needs saving
     if not any(card.get('_dirty', False) for card in deck_to_save):
-         print(f"Info: No dirty cards found for '{os.path.basename(filepath)}'. Skipping save.")
+         # print(f"Info: No dirty cards found for '{os.path.basename(filepath)}'. Skipping save.")
          return # Nothing to save for this specific file
 
     # Determine fieldnames: Prioritize existing header if file exists
@@ -115,10 +163,9 @@ def save_deck(filepath: str, deck_to_save: List[Dict[str, Any]]):
     try:
         if os.path.exists(filepath):
             with open(filepath, mode='r', newline='', encoding='utf-8-sig') as csvfile:
-                reader = csv.reader(csvfile)
+                reader = csv.reader(csvfile) # Keep it simple for now
                 header = next(reader, None)
                 if header: # Use existing header if valid
-                     # Simple validation: check if core fields are present
                      if all(field in header for field in ['front', 'back', 'next_review_date', 'interval_days']):
                          fieldnames = header
                      else:
@@ -143,18 +190,24 @@ def save_deck(filepath: str, deck_to_save: List[Dict[str, Any]]):
             fieldnames_for_write = [f for f in fieldnames if f not in ['_dirty', 'deck_filepath', 'original_row_index'] or f in potential_fieldnames]
             # Make sure core fields are definitely included if missing from potential_fieldnames somehow
             core_fields = ['front', 'back', 'next_review_date', 'interval_days']
-            for cf in reversed(core_fields): # Insert at beginning if missing
-                if cf not in fieldnames_for_write:
-                    fieldnames_for_write.insert(0, cf)
+            # Ensure core fields are present and at the beginning, maintaining relative order of others
+            final_fieldnames = []
+            present_core = {f for f in core_fields if f in fieldnames_for_write}
+            final_fieldnames.extend([f for f in core_fields if f in present_core]) # Add present core fields first
+            final_fieldnames.extend([f for f in fieldnames_for_write if f not in present_core]) # Add the rest
 
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames_for_write, extrasaction='ignore')
+
+            writer = csv.DictWriter(csvfile, fieldnames=final_fieldnames, extrasaction='ignore')
             writer.writeheader()
             for card in deck_to_save:
                 # Prepare row data for writing
                 row_to_write = card.copy() # Start with all data from the card
                 # Format specific fields
                 row_to_write['next_review_date'] = row_to_write.get('next_review_date').strftime(DATE_FORMAT) if row_to_write.get('next_review_date') else ''
-                row_to_write['interval_days'] = str(round(row_to_write.get('interval_days', INITIAL_INTERVAL_DAYS), 2))
+                # Ensure interval is formatted correctly (handle potential 0.0 for new)
+                interval_val = row_to_write.get('interval_days', INITIAL_INTERVAL_DAYS)
+                row_to_write['interval_days'] = str(round(interval_val, 2)) if interval_val is not None else ''
+
 
                 # DictWriter with extrasaction='ignore' handles extra fields in row_to_write
                 writer.writerow(row_to_write)
@@ -173,39 +226,67 @@ def save_deck(filepath: str, deck_to_save: List[Dict[str, Any]]):
 def get_due_cards(deck: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Filters the deck (potentially combined) to find cards due for review today."""
     today = datetime.date.today()
+    # Card is due if date is missing (treated as new) or date is today or earlier
     return [card for card in deck if card.get('next_review_date') is None or card.get('next_review_date') <= today]
 
 def update_card_schedule(card: Dict[str, Any], quality: int):
     """Updates the card's interval and next review date based on recall quality."""
-    AGAIN_INTERVAL_DAYS = 1.0; HARD_FACTOR = 1.2; GOOD_FACTOR = 2.5; EASY_FACTOR = 4.0
+    # --- SM-2 Algorithm Parameters (Simplified) ---
+    AGAIN_INTERVAL_DAYS = 0.0 # Reset interval completely for 'Again'
+    HARD_FACTOR = 1.2       # Multiplier for 'Hard'
+    GOOD_FACTOR = 2.5       # Multiplier for 'Good' (standard recall)
+    EASY_FACTOR = 4.0       # Multiplier for 'Easy'
+    FIRST_GOOD_INTERVAL = 1.0 # Interval after getting 'Good' on a new card
+    FIRST_EASY_INTERVAL = 4.0 # Interval after getting 'Easy' on a new card
 
     today = datetime.date.today()
-    current_interval = card.get('interval_days', INITIAL_INTERVAL_DAYS)
+    current_interval = card.get('interval_days', 0.0) # Default to 0 for potentially new cards
+    is_new_card = current_interval <= 0 # Check if it's the first review
+
     new_interval = current_interval
     days_to_add = 0
 
     if quality == 1: # Again
-        new_interval = INITIAL_INTERVAL_DAYS; days_to_add = 1
+        new_interval = AGAIN_INTERVAL_DAYS # Reset interval
+        days_to_add = 1 # See it again tomorrow (or configured minimum lapse)
     elif quality == 2: # Hard
-        new_interval = max(MINIMUM_INTERVAL_DAYS, current_interval * HARD_FACTOR); days_to_add = round(new_interval)
+        if is_new_card:
+             new_interval = AGAIN_INTERVAL_DAYS # Treat Hard on new card like Again
+             days_to_add = 1
+        else:
+            new_interval = max(MINIMUM_INTERVAL_DAYS, current_interval * HARD_FACTOR)
+            days_to_add = round(new_interval)
     elif quality == 3: # Good
-        new_interval = max(MINIMUM_INTERVAL_DAYS, current_interval * GOOD_FACTOR); days_to_add = round(new_interval)
+        if is_new_card:
+            new_interval = FIRST_GOOD_INTERVAL
+        else:
+            new_interval = max(MINIMUM_INTERVAL_DAYS, current_interval * GOOD_FACTOR)
+        days_to_add = round(new_interval)
     elif quality == 4: # Easy
-        good_days = round(max(MINIMUM_INTERVAL_DAYS, current_interval * GOOD_FACTOR))
-        new_interval = max(MINIMUM_INTERVAL_DAYS, current_interval * EASY_FACTOR);
-        days_to_add = max(good_days + 1, round(new_interval))
-    else: return
+        if is_new_card:
+            new_interval = FIRST_EASY_INTERVAL
+        else:
+            good_interval_calc = max(MINIMUM_INTERVAL_DAYS, current_interval * GOOD_FACTOR)
+            easy_interval_calc = max(MINIMUM_INTERVAL_DAYS, current_interval * EASY_FACTOR)
+            new_interval = max(good_interval_calc + 1, easy_interval_calc) # At least one day more than good
+        days_to_add = round(new_interval)
+    else:
+        print(f"Warning: Invalid quality rating {quality} received.")
+        return # No change if quality is invalid
+
+    if quality != 1 and days_to_add < MINIMUM_INTERVAL_DAYS:
+         days_to_add = int(MINIMUM_INTERVAL_DAYS) # Schedule at least minimum days away
 
     next_review_date = today + datetime.timedelta(days=days_to_add)
 
-    # Check if update actually changed anything before marking dirty
     old_interval = card.get('interval_days')
     old_date = card.get('next_review_date')
+    new_interval_rounded = round(new_interval, 2)
 
-    if old_interval != new_interval or old_date != next_review_date:
-        card['interval_days'] = new_interval
+    if old_interval != new_interval_rounded or old_date != next_review_date:
+        card['interval_days'] = new_interval_rounded
         card['next_review_date'] = next_review_date
-        card['_dirty'] = True # Mark dirty ONLY if something changed
+        card['_dirty'] = True
 
 
 def find_decks(decks_dir: str) -> List[str]:
@@ -214,7 +295,15 @@ def find_decks(decks_dir: str) -> List[str]:
         try:
             os.makedirs(decks_dir)
             print(f"Created decks directory: '{decks_dir}'")
-            return []
+            dummy_path = os.path.join(decks_dir, "example_deck.csv")
+            if not os.path.exists(dummy_path):
+                 with open(dummy_path, 'w', newline='', encoding='utf-8') as f:
+                      writer = csv.writer(f)
+                      writer.writerow(['front', 'back', 'next_review_date', 'interval_days'])
+                      writer.writerow(['Sample Question: What is $E=mc^2$?', 'Sample Answer: Energy equals mass times the speed of light squared.', '', ''])
+                      writer.writerow(['Regular Text', 'Another plain card.', '', ''])
+                 print(f"Created '{dummy_path}'. Please replace it with your actual decks.")
+            return ["example_deck.csv"]
         except OSError as e:
             messagebox.showerror("Error", f"Could not create directory '{decks_dir}': {e}")
             return []
@@ -227,57 +316,148 @@ def find_decks(decks_dir: str) -> List[str]:
         return []
 
 # --- Statistics Calculation ---
-def calculate_deck_statistics(deck_data: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Calculates various statistics for the provided deck data."""
+def calculate_deck_statistics(deck_data: List[Dict[str, Any]], forecast_days: int = STATS_FORECAST_DAYS) -> Dict[str, Any]:
+    """Calculates various statistics for the provided deck data, including future due counts."""
     stats = {
-        "total_cards": 0,
-        "due_today": 0,
-        "due_tomorrow": 0,
-        "due_next_7_days": 0,
-        "new_cards": 0,
-        "learning_review_cards": 0,
-        "average_interval": 0.0,
+        "total_cards": 0, "new_cards": 0, "learning_cards": 0, "young_cards": 0,
+        "mature_cards": 0, "suspended_cards": 0, "average_interval_mature": 0.0,
+        "due_counts_forecast": defaultdict(int), "due_today": 0, "due_tomorrow": 0,
+        "due_next_7_days": 0, "cards_by_interval_range": defaultdict(int),
     }
-    if not deck_data:
-        return stats
+    if not deck_data: return stats
 
     today = datetime.date.today()
     tomorrow = today + datetime.timedelta(days=1)
-    next_week = today + datetime.timedelta(days=7)
-    total_interval = 0.0
-    review_card_count = 0 # Count only cards with an interval for averaging
+    next_7_days_start = tomorrow
+    next_7_days_end = today + datetime.timedelta(days=7)
+    forecast_end_date = today + datetime.timedelta(days=forecast_days)
+
+    total_mature_interval = 0.0
+    mature_card_count = 0
+    learning_interval_threshold = 21
+    young_interval_threshold = 90
 
     stats["total_cards"] = len(deck_data)
 
+    interval_bins = [0, 1, 3, 7, 14, 30, 60, 90, 180, 365, float('inf')]
+    interval_labels = [
+        "New/Learning (0d)", "<=1d", "2-3d", "4-7d", "8-14d",
+        "15-30d", "1-2m", "2-3m", "3-6m", "6-12m", ">1y"
+    ]
+
     for card in deck_data:
         review_date = card.get('next_review_date')
-        interval = card.get('interval_days', INITIAL_INTERVAL_DAYS)
+        interval = card.get('interval_days', 0.0)
 
-        # New Cards
-        if review_date is None or interval == INITIAL_INTERVAL_DAYS: # Consider cards with initial interval as new too
-            stats["new_cards"] += 1
-            stats["due_today"] += 1 # New cards are due today
+        if interval <= 0: stats["new_cards"] += 1
+        elif interval < learning_interval_threshold: stats["learning_cards"] += 1
+        elif interval < young_interval_threshold: stats["young_cards"] += 1
         else:
-            # Learning/Review Cards
-            stats["learning_review_cards"] += 1
-            total_interval += interval
-            review_card_count += 1
+            stats["mature_cards"] += 1
+            total_mature_interval += interval
+            mature_card_count += 1
 
-            # Due Counts
-            if review_date <= today:
-                stats["due_today"] += 1
-            if review_date == tomorrow:
-                stats["due_tomorrow"] += 1
-            if today < review_date <= next_week: # Due after today but within 7 days
-                stats["due_next_7_days"] += 1
+        for i in range(len(interval_bins) - 1):
+            if interval_bins[i] <= interval < interval_bins[i+1]:
+                 label_index = i + 1 if interval > 0 else 0
+                 stats["cards_by_interval_range"][interval_labels[label_index]] += 1
+                 break
 
-    # Calculate Average Interval
-    if review_card_count > 0:
-        stats["average_interval"] = round(total_interval / review_card_count, 2)
+        if review_date:
+            if review_date <= forecast_end_date and review_date >= today:
+                 stats["due_counts_forecast"][review_date] += 1
+            if review_date <= today: stats["due_today"] += 1
+            if review_date == tomorrow: stats["due_tomorrow"] += 1
+            if next_7_days_start <= review_date <= next_7_days_end: stats["due_next_7_days"] += 1
+        elif interval <= 0:
+             stats["due_today"] += 1
+             stats["due_counts_forecast"][today] += 1
+
+    if mature_card_count > 0:
+        stats["average_interval_mature"] = round(total_mature_interval / mature_card_count, 1)
     else:
-        stats["average_interval"] = 0.0 # Avoid division by zero
+        stats["average_interval_mature"] = 0.0
+
+    full_forecast = {}
+    for i in range(forecast_days + 1):
+        current_date = today + datetime.timedelta(days=i)
+        full_forecast[current_date] = stats["due_counts_forecast"].get(current_date, 0)
+    stats["due_counts_forecast"] = dict(sorted(full_forecast.items()))
+
+    stats["cards_by_interval_range"] = dict(sorted(
+        stats["cards_by_interval_range"].items(),
+        key=lambda item: interval_labels.index(item[0])
+    ))
 
     return stats
+
+# --- Math Rendering Function ---
+def render_math_to_image(text: str, text_color: str, bg_color: str, dpi: int = MATH_RENDER_DPI) -> Optional[Image.Image]:
+    """Renders text (potentially with Matplotlib mathtext) to a PIL Image."""
+    if not MATPLOTLIB_AVAILABLE or not PIL_AVAILABLE:
+        return None
+    if '$' not in text: # Basic check for math markup
+         return None # Don't render if no math detected
+
+    try:
+        fig = plt.figure(figsize=(8, 1), dpi=dpi, facecolor=bg_color) # Start with a reasonable size
+
+        # Render text centered in the figure
+        # Use fig.text for positioning relative to the figure
+        # We need to estimate the required figure size based on text extent
+        # This is tricky; let's render first, then adjust.
+        text_obj = fig.text(0.5, 0.5, text, ha='center', va='center',
+                            fontsize=12, # Adjust font size as needed
+                            color=text_color,
+                            wrap=True) # Enable wrapping
+
+        # --- Auto-adjust figure size to fit text tightly ---
+        # Force draw to calculate text bounding box
+        fig.canvas.draw()
+
+        # Get bounding box in display coordinates
+        bbox = text_obj.get_window_extent(renderer=fig.canvas.get_renderer())
+
+        # Calculate required width and height in inches
+        # Add some padding
+        padding_inches = 0.1
+        req_width = (bbox.width / dpi) + 2 * padding_inches
+        req_height = (bbox.height / dpi) + 2 * padding_inches
+
+        # Minimum size to avoid tiny images
+        min_size_inches = 0.3
+        req_width = max(req_width, min_size_inches)
+        req_height = max(req_height, min_size_inches)
+
+
+        # Resize figure
+        fig.set_size_inches(req_width, req_height)
+
+        # Re-center text in the *resized* figure
+        text_obj.set_position((0.5, 0.5))
+        text_obj.set_text(text) # Re-set text in case properties were lost
+
+
+        # Save to an in-memory buffer
+        buf = io.BytesIO()
+        fig.savefig(buf, format='png', dpi=dpi, facecolor=bg_color, edgecolor='none', bbox_inches='tight', pad_inches=padding_inches)
+        buf.seek(0)
+
+        # Close the figure to free memory
+        plt.close(fig)
+
+        # Load the image data using Pillow
+        image = Image.open(buf)
+        return image
+
+    except Exception as e:
+        print(f"Error rendering math text: {e}")
+        # Ensure figure is closed even on error
+        try:
+             plt.close(fig)
+        except:
+             pass
+        return None
 
 
 # --- GUI Application Class ---
@@ -287,22 +467,29 @@ class FlashcardApp(ctk.CTk):
         super().__init__()
 
         self.title(APP_NAME)
-        self.geometry("700x650") # Increased height slightly for stats button
+        self.geometry("700x650")
         ctk.set_appearance_mode("System")
         ctk.set_default_color_theme("blue")
 
         # --- Data Attributes ---
         self.decks_dir = DECKS_DIR
-        self.available_decks: List[str] = [] # List of filenames (e.g., "deck1.csv")
-        self.current_deck_paths: List[str] = [] # List of full paths being studied
-        self.deck_data: List[Dict[str, Any]] = [] # Combined data from loaded decks
+        self.available_decks: List[str] = []
+        self.current_deck_paths: List[str] = []
+        self.deck_data: List[Dict[str, Any]] = []
         self.due_cards: List[Dict[str, Any]] = []
         self.current_card_index: int = -1
         self.showing_answer: bool = False
         self.add_card_window: Optional[ctk.CTkToplevel] = None
         self.settings_window: Optional[ctk.CTkToplevel] = None
-        self.stats_window: Optional[ctk.CTkToplevel] = None # Added for stats
+        self.stats_window: Optional[ctk.CTkToplevel] = None
+        self.stats_figure_canvas: Optional[FigureCanvasTkAgg] = None
+        self.stats_toolbar: Optional[NavigationToolbar2Tk] = None
         self._is_review_active: bool = False
+        # Store theme colors for math rendering and UI elements
+        self._update_theme_colors() # Initialize theme colors
+
+        # Cache for rendered math images (optional, for performance)
+        self._math_image_cache: Dict[str, CTkImage] = {}
 
         # --- UI Elements ---
         self.main_frame = ctk.CTkFrame(self)
@@ -317,14 +504,11 @@ class FlashcardApp(ctk.CTk):
 
         # Use standard Tkinter Listbox for multi-select
         self.deck_listbox = tk.Listbox(self.top_frame, selectmode=tk.EXTENDED,
-                                       height=5, exportselection=False, # Crucial for multiple listboxes
-                                       # Basic styling (can be customized further if needed)
-                                       bg="#2B2B2B", fg="#DCE4EE", # Example dark theme colors
-                                       selectbackground="#1F6AA5", selectforeground="white",
-                                       borderwidth=0, highlightthickness=1,
-                                       highlightbackground="#565B5E",
-                                       highlightcolor="#1F6AA5")
+                                       height=5, exportselection=False,
+                                       borderwidth=1, relief="solid",
+                                       highlightthickness=0)
         self.deck_listbox.pack(side="top", fill="x", expand=True, padx=5)
+        self._update_listbox_colors() # Set initial colors
 
         # Frame for Load/Reload buttons
         self.deck_button_frame = ctk.CTkFrame(self.top_frame)
@@ -336,13 +520,14 @@ class FlashcardApp(ctk.CTk):
         self.reload_decks_button = ctk.CTkButton(self.deck_button_frame, text="Reload List", width=100, command=self.populate_deck_listbox)
         self.reload_decks_button.pack(side="left", padx=5)
 
+        # Add/Settings/Stats buttons
         self.add_card_button = ctk.CTkButton(self.deck_button_frame, text="Add (A)", width=80, command=self.open_add_card_window, state="disabled")
-        self.add_card_button.pack(side="left", padx=(10, 0))
+        self.add_card_button.pack(side="left", padx=(15, 0))
 
         self.settings_button = ctk.CTkButton(self.deck_button_frame, text="Settings", width=80, command=self.open_settings_window, state="disabled")
-        self.settings_button.pack(side="left", padx=(5, 0)) # Adjusted padding
+        self.settings_button.pack(side="left", padx=(5, 0))
 
-        self.stats_button = ctk.CTkButton(self.deck_button_frame, text="Stats", width=80, command=self.open_stats_window, state="disabled") # Added Stats button
+        self.stats_button = ctk.CTkButton(self.deck_button_frame, text="Stats", width=80, command=self.open_stats_window, state="disabled")
         self.stats_button.pack(side="left", padx=(5, 0))
 
 
@@ -350,11 +535,17 @@ class FlashcardApp(ctk.CTk):
         self.card_frame = ctk.CTkFrame(self.main_frame)
         self.card_frame.pack(pady=5, padx=10, fill="both", expand=True)
 
-        self.front_label = ctk.CTkLabel(self.card_frame, text="Select deck(s) and click 'Load' to begin", font=ctk.CTkFont(size=20), wraplength=600)
-        self.front_label.pack(pady=(15, 10), padx=10)
+        # Labels will now display EITHER text OR a rendered math image
+        self.front_label = ctk.CTkLabel(self.card_frame, text="Select deck(s) and click 'Load' to begin",
+                                        font=ctk.CTkFont(size=20), wraplength=600,
+                                        compound="center", # Allow image and text (though we'll clear text when image is shown)
+                                        anchor="center") # Center content
+        self.front_label.pack(pady=(15, 10), padx=10, fill="both", expand=True)
 
-        self.back_label = ctk.CTkLabel(self.card_frame, text="", font=ctk.CTkFont(size=16), wraplength=600)
-        # Pack later
+        self.back_label = ctk.CTkLabel(self.card_frame, text="",
+                                       font=ctk.CTkFont(size=16), wraplength=600,
+                                       compound="center", anchor="center")
+        # Pack later when showing answer
 
         # Control Frame: Buttons
         self.control_frame = ctk.CTkFrame(self.main_frame)
@@ -364,16 +555,15 @@ class FlashcardApp(ctk.CTk):
         self.show_answer_button.pack(side="top", pady=5)
 
         self.rating_frame = ctk.CTkFrame(self.control_frame, fg_color="transparent")
-        # Rating buttons (packed later)
-        self.again_button = ctk.CTkButton(self.rating_frame, text="Again (1)", command=lambda: self.rate_card(1), width=80)
-        self.hard_button = ctk.CTkButton(self.rating_frame, text="Hard (2)", command=lambda: self.rate_card(2), width=80)
-        self.good_button = ctk.CTkButton(self.rating_frame, text="Good (3/Space/Enter)", command=lambda: self.rate_card(3), width=120)
-        self.easy_button = ctk.CTkButton(self.rating_frame, text="Easy (4)", command=lambda: self.rate_card(4), width=80)
+        self.again_button = ctk.CTkButton(self.rating_frame, text="Again (1)", command=lambda: self.rate_card(1), width=80, fg_color="#E53E3E", hover_color="#C53030")
+        self.hard_button = ctk.CTkButton(self.rating_frame, text="Hard (2)", command=lambda: self.rate_card(2), width=80, fg_color="#DD6B20", hover_color="#C05621")
+        self.good_button = ctk.CTkButton(self.rating_frame, text="Good (3/Space/Enter)", command=lambda: self.rate_card(3), width=140)
+        self.easy_button = ctk.CTkButton(self.rating_frame, text="Easy (4)", command=lambda: self.rate_card(4), width=80, fg_color="#38A169", hover_color="#2F855A")
+
         self.again_button.pack(side="left", padx=5, pady=5, expand=True)
         self.hard_button.pack(side="left", padx=5, pady=5, expand=True)
         self.good_button.pack(side="left", padx=5, pady=5, expand=True)
         self.easy_button.pack(side="left", padx=5, pady=5, expand=True)
-
 
         # Status Bar Frame
         self.status_frame = ctk.CTkFrame(self.main_frame, height=30)
@@ -383,705 +573,671 @@ class FlashcardApp(ctk.CTk):
         self.cards_due_label = ctk.CTkLabel(self.status_frame, text="")
         self.cards_due_label.pack(side="right", padx=10)
 
-
         # --- Initial Setup ---
-        self.populate_deck_listbox() # Load decks into listbox
+        self.populate_deck_listbox()
         self._setup_shortcuts()
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
+        # Track theme changes
+        self._appearance_mode_tracker = ctk.StringVar(value=ctk.get_appearance_mode())
+        self._appearance_mode_tracker.trace_add("write", self._handle_appearance_change)
+
+
+    # --- Theme Handling ---
+    def _handle_appearance_change(self, *args):
+        """Update colors when system theme changes."""
+        print("Appearance mode changed:", ctk.get_appearance_mode())
+        self._update_theme_colors() # Update stored colors first
+        self._update_listbox_colors() # Then update listbox using new colors
+        # Re-render the current card if it's showing math
+        if self._is_review_active and 0 <= self.current_card_index < len(self.due_cards):
+             card = self.due_cards[self.current_card_index]
+             self._display_label_content(self.front_label, card['front'])
+             if self.showing_answer:
+                 self._display_label_content(self.back_label, card['back'])
+        # Update stats plot colors if window is open
+        if self.stats_window and self.stats_window.winfo_exists() and MATPLOTLIB_AVAILABLE:
+             # Re-create the chart with new theme colors
+             try:
+                 # Need the parent frame and current stats data
+                 # Assuming self.stats_plot_frame and self.current_stats are stored or accessible
+                 # For simplicity, let's just recalculate stats if needed.
+                 current_stats = calculate_deck_statistics(self.deck_data, forecast_days=STATS_FORECAST_DAYS)
+                 if hasattr(self, 'stats_plot_frame') and self.stats_plot_frame:
+                     self._create_stats_chart(self.stats_plot_frame, current_stats)
+                 else:
+                     print("Warning: Cannot update stats plot theme - plot frame reference missing.")
+             except Exception as e:
+                 print(f"Error updating stats plot theme: {e}")
+
+
+    def _update_theme_colors(self):
+        """Reads current theme colors from the already loaded theme data."""
+        # REMOVED: ctk.ThemeManager.load_theme() - Unnecessary and caused the error
+        self._current_text_color = self._apply_appearance_mode(ctk.ThemeManager.theme["CTkLabel"]["text_color"])
+        self._current_bg_color = self._apply_appearance_mode(ctk.ThemeManager.theme["CTkFrame"]["fg_color"])
+        self._current_listbox_select_bg = self._apply_appearance_mode(ctk.ThemeManager.theme["CTkButton"]["fg_color"])
+        self._current_listbox_select_fg = self._apply_appearance_mode(ctk.ThemeManager.theme["CTkButton"]["text_color"])
+        # Clear math image cache as colors changed
+        self._math_image_cache = {}
+
+
+    def _update_listbox_colors(self):
+        """Sets the colors for the Tkinter Listbox based on CURRENTLY STORED theme colors."""
+        # Use the colors stored by _update_theme_colors
+        # Ensure _update_theme_colors has been called at least once
+        if not hasattr(self, '_current_text_color'):
+             self._update_theme_colors()
+
+        self.deck_listbox.configure(
+            bg=self._current_bg_color, # Use stored frame background
+            fg=self._current_text_color, # Use stored label text color
+            selectbackground=self._current_listbox_select_bg, # Use stored button background
+            selectforeground=self._current_listbox_select_fg # Use stored button text color
+        )
+
+    # Helper to get the correct color tuple element based on appearance mode
+    def _apply_appearance_mode(self, color: Any) -> str:
+        """Gets the light or dark mode color string from a CTk color tuple or returns string directly."""
+        if isinstance(color, (list, tuple)) and len(color) >= 2:
+            # 0 is light mode, 1 is dark mode
+            mode_index = 1 if ctk.get_appearance_mode().lower() == "dark" else 0
+            # Handle cases where one mode might be None (though unlikely in default themes)
+            return color[mode_index] if color[mode_index] is not None else "#000000" # Fallback
+        elif isinstance(color, str):
+             return color # Already a single color string
+        else:
+             # Fallback if color format is unexpected (e.g., None)
+             print(f"Warning: Unexpected color format '{color}'. Using fallback.")
+             return "#FFFFFF" if ctk.get_appearance_mode().lower() == "light" else "#000000"
+
 
     # --- UI Update Methods ---
-
     def update_status(self, message: str):
-        """Updates the status bar text."""
         self.status_label.configure(text=message)
-        print(f"Status: {message}")
 
     def update_due_count(self):
-        """Updates the label showing the number of cards remaining in the current session."""
-        if self._is_review_active and self.current_card_index < len(self.due_cards):
-             remaining = len(self.due_cards) - self.current_card_index
-             self.cards_due_label.configure(text=f"Due: {remaining}")
-        elif self.current_deck_paths: # Decks loaded but maybe none due or session finished
-            # Recalculate due cards from the full loaded deck data
+        if self._is_review_active and self.due_cards and self.current_card_index < len(self.due_cards):
+            remaining = len(self.due_cards) - self.current_card_index
+            self.cards_due_label.configure(text=f"Due: {remaining}")
+        elif self.current_deck_paths:
             current_due_count = len(get_due_cards(self.deck_data))
             self.cards_due_label.configure(text=f"Due Today: {current_due_count}")
+            if current_due_count == 0 and not self._is_review_active and self.deck_data:
+                 self.update_status("No cards due today in selected deck(s).")
         else:
-             self.cards_due_label.configure(text="") # Clear when no session active/no deck
+            self.cards_due_label.configure(text="")
 
     def populate_deck_listbox(self):
-        """Finds decks and updates the listbox."""
+        selected_indices = self.deck_listbox.curselection()
         self.available_decks = find_decks(self.decks_dir)
-        self.deck_listbox.delete(0, tk.END) # Clear existing items
+        self.deck_listbox.delete(0, tk.END)
 
         if not self.available_decks:
             self.deck_listbox.insert(tk.END, " No decks found in 'decks' folder ")
-            self.deck_listbox.configure(state="disabled") # Disable listbox
+            self.deck_listbox.configure(state="disabled")
             self.load_button.configure(state="disabled")
             self.update_status(f"No decks found in '{self.decks_dir}'. Add CSV files there.")
+            self.reset_session_state()
+            self._display_label_content(self.front_label, "Add decks (.csv) to the 'decks' folder")
         else:
-            self.deck_listbox.configure(state="normal") # Enable listbox
+            self.deck_listbox.configure(state="normal")
             self.load_button.configure(state="normal")
             for deck_file in self.available_decks:
-                deck_name = os.path.splitext(deck_file)[0] # Show name without .csv
-                self.deck_listbox.insert(tk.END, f" {deck_name}") # Add padding for looks
-            self.update_status(f"Found {len(self.available_decks)} deck(s). Select and click Load.")
+                deck_name = os.path.splitext(deck_file)[0]
+                self.deck_listbox.insert(tk.END, f" {deck_name}")
 
-        # Reset current session if list is reloaded
-        self.reset_session_state()
-        self.front_label.configure(text="Select deck(s) and click 'Load' to begin")
+            for index in selected_indices:
+                if index < self.deck_listbox.size():
+                     self.deck_listbox.selection_set(index)
+
+            if not self.current_deck_paths:
+                self.update_status(f"Found {len(self.available_decks)} deck(s). Select and click Load.")
+                self.reset_session_state()
+                self._display_label_content(self.front_label, "Select deck(s) and click 'Load' to begin")
+            else:
+                loaded_deck_names = [os.path.splitext(os.path.basename(p))[0] for p in self.current_deck_paths]
+                self.update_status(f"Loaded: {', '.join(loaded_deck_names)}")
+
+
+    def _display_label_content(self, label: ctk.CTkLabel, content: str):
+         """Sets label content, rendering math to image if needed."""
+         # Cache key combines content and current theme colors
+         cache_key = f"{content}|{self._current_text_color}|{self._current_bg_color}"
+
+         # Ensure content is a string
+         if not isinstance(content, str):
+             content = str(content) # Convert just in case
+
+         if MATPLOTLIB_AVAILABLE and PIL_AVAILABLE and '$' in content:
+             # Check cache first
+             if cache_key in self._math_image_cache:
+                 ctk_image = self._math_image_cache[cache_key]
+                 # print(f"Using cached math image for: {content[:30]}...") # Debug cache
+             else:
+                 # print(f"Rendering math image for: {content[:30]}...") # Debug render
+                 pil_image = render_math_to_image(content, self._current_text_color, self._current_bg_color)
+                 if pil_image:
+                      ctk_image = CTkImage(light_image=pil_image, dark_image=pil_image, size=(pil_image.width, pil_image.height))
+                      self._math_image_cache[cache_key] = ctk_image # Store in cache
+                 else:
+                      # Render failed, show error text instead
+                      ctk_image = None
+                      content = f"[Math Render Error]\n{content}" # Show error indication
+
+             if ctk_image:
+                 label.configure(image=ctk_image, text="") # Show image, clear text
+                 return # Done
+
+         # Fallback or no math detected: show plain text
+         label.configure(text=content, image=None) # Clear image
 
 
     def display_card(self):
         """Updates the UI to show the current card's front."""
         if self.current_card_index < 0 or self.current_card_index >= len(self.due_cards):
-            # Handle session complete state
             self._is_review_active = False
             loaded_deck_names = [os.path.splitext(os.path.basename(p))[0] for p in self.current_deck_paths]
             deck_context = f"'{', '.join(loaded_deck_names)}'" if loaded_deck_names else "this session"
+            total_due_today = len(get_due_cards(self.deck_data))
 
-            self.front_label.configure(text=f"Session complete for {deck_context}!" if self.deck_data else "Select deck(s) and load to begin")
+            message = ""
+            if self.deck_data:
+                 if total_due_today > 0:
+                      message = f"Session complete for {deck_context}!\n({total_due_today} cards due today in total)"
+                      self.update_status(f"Review session finished. Check back later or load other decks.")
+                 else:
+                      message = f"No more cards due today in {deck_context}!"
+                      self.update_status(f"All cards reviewed for today!")
+            else:
+                 message = "Select deck(s) and click 'Load' to begin"
+                 self.update_status("No deck loaded.")
+
+            self._display_label_content(self.front_label, message)
+            self._display_label_content(self.back_label, "") # Clear back label
             self.back_label.pack_forget()
             self.show_answer_button.pack(side="top", pady=5)
             self.show_answer_button.configure(state="disabled", text="Show Answer (Space/Enter)")
             self.rating_frame.pack_forget()
-            self.update_status(f"Review session finished for {deck_context}." if self.deck_data else "No decks loaded.")
-            # Enable Add Card only if exactly one deck is loaded
-            self.add_card_button.configure(state="normal" if len(self.current_deck_paths) == 1 else "disabled")
-            # Enable Settings/Stats if any deck is loaded
-            self.settings_button.configure(state="normal" if self.current_deck_paths else "disabled")
-            self.stats_button.configure(state="normal" if self.current_deck_paths else "disabled")
-            self.update_due_count() # Show total due today
+            self.update_due_count()
+            self.focus_set()
+            self.deck_listbox.focus_set()
             return
 
-        # A card is being displayed
+        # --- Display Current Card ---
         self._is_review_active = True
         self.showing_answer = False
         card = self.due_cards[self.current_card_index]
 
-        self.front_label.configure(text=f"Front:\n\n{card['front']}")
-        self.back_label.configure(text="")
-        self.back_label.pack_forget()
+        # Display Front using the helper function
+        self._display_label_content(self.front_label, card['front'])
+        self.front_label.pack(pady=(15, 10), padx=10, fill="both", expand=True)
 
+        # Hide Back and Rating Buttons, Show "Show Answer"
+        self._display_label_content(self.back_label, "") # Clear back label
+        self.back_label.pack_forget()
+        self.rating_frame.pack_forget()
         self.show_answer_button.pack(side="top", pady=5)
         self.show_answer_button.configure(state="normal", text="Show Answer (Space/Enter)")
-        self.rating_frame.pack_forget()
 
-        # Indicate source deck (optional)
-        source_deck_name = os.path.splitext(os.path.basename(card.get('deck_filepath', 'Unknown Deck')))[0]
-        self.update_status(f"Card {self.current_card_index + 1} of {len(self.due_cards)} (From: {source_deck_name} | Row: {card.get('original_row_index', 'N/A')})")
-        self.update_due_count() # Show remaining in session
-        # Add/Settings/Stats button status managed by load/completion logic
-
-
-    # --- Event Handlers ---
-
-    def reset_session_state(self):
-        """Clears current session data and resets UI elements."""
-        self.current_deck_paths = []
-        self.deck_data = []
-        self.due_cards = []
-        self.current_card_index = -1
-        self._is_review_active = False
-        self.showing_answer = False
-        self.show_answer_button.configure(state="disabled")
-        self.rating_frame.pack_forget()
-        self.add_card_button.configure(state="disabled") # Disable add initially
-        self.settings_button.configure(state="disabled") # Disable settings initially
-        self.stats_button.configure(state="disabled") # Disable stats initially
-        self.update_status("Session reset. Select decks to load.")
+        self.update_status(f"Reviewing card {self.current_card_index + 1} of {len(self.due_cards)}")
         self.update_due_count()
+        self.show_answer_button.focus_set()
+
+    def show_answer(self):
+        """Reveals the answer and shows rating buttons."""
+        if not self._is_review_active or self.showing_answer: return
+        if self.current_card_index < 0 or self.current_card_index >= len(self.due_cards):
+            self.display_card(); return
+
+        self.showing_answer = True
+        card = self.due_cards[self.current_card_index]
+
+        # Display Back Label using the helper function
+        self._display_label_content(self.back_label, card['back'])
+        self.back_label.pack(pady=(5, 15), padx=10, fill="x") # Pack below front
+
+        # Hide "Show Answer", Show Rating Buttons
+        self.show_answer_button.pack_forget()
+        self.rating_frame.pack(side="top", pady=5, fill="x", padx=20)
+
+        self.update_status("Rate your recall difficulty.")
+        self.good_button.focus_set()
+
+    def rate_card(self, quality: int):
+        """Processes the user's rating, updates schedule, and moves to the next card."""
+        if not self._is_review_active or not self.showing_answer: return
+
+        if 0 <= self.current_card_index < len(self.due_cards):
+            card = self.due_cards[self.current_card_index]
+            update_card_schedule(card, quality)
+
+            if quality == 1: # Again
+                card_to_repeat = self.due_cards.pop(self.current_card_index)
+                insert_pos = min(self.current_card_index + 5, len(self.due_cards))
+                self.due_cards.insert(insert_pos, card_to_repeat)
+                self.update_status(f"Card marked 'Again'. Will see again shortly.")
+            else: # Hard, Good, Easy
+                self.current_card_index += 1
+
+            self.display_card()
+        else:
+            print("Error: Tried to rate card with invalid index.")
+            self.display_card()
 
 
+    # --- Deck Management ---
     def load_selected_decks(self):
-        """Loads data from decks selected in the listbox."""
         selected_indices = self.deck_listbox.curselection()
         if not selected_indices:
             messagebox.showwarning("No Selection", "Please select one or more decks from the list.")
             return
 
-        selected_files = [self.available_decks[i] for i in selected_indices]
-        selected_paths = [os.path.join(self.decks_dir, f) for f in selected_files]
+        selected_paths = [os.path.join(self.decks_dir, self.available_decks[i]) for i in selected_indices]
+        selected_names = [os.path.splitext(self.available_decks[i])[0] for i in selected_indices]
 
-        self.reset_session_state() # Clear previous session
-        self.current_deck_paths = selected_paths # Store loaded paths
-        combined_deck_data = []
-        loaded_deck_names = []
+        self.save_all_dirty_cards()
+
+        self.update_status(f"Loading deck(s): {', '.join(selected_names)}...")
+        self.current_deck_paths = []
+        self.deck_data = []
         load_errors = False
+        self._math_image_cache = {} # Clear cache when loading new deck
 
-        self.update_status(f"Loading {len(selected_files)} deck(s)...")
-        self.update() # Force UI update for status message
+        for i, filepath in enumerate(selected_paths):
+            deck_name = selected_names[i]
+            print(f"Loading: {filepath}")
+            single_deck = load_deck(filepath)
+            if single_deck is None:
+                load_errors = True
+                self.update_status(f"Error loading '{deck_name}'. Check console/log.")
+            elif not single_deck and os.path.exists(filepath):
+                 messagebox.showwarning("Empty Deck", f"Deck '{deck_name}' ({os.path.basename(filepath)}) is empty or could not be read properly.")
+                 self.current_deck_paths.append(filepath)
+            elif single_deck:
+                for card in single_deck: card['deck_filepath'] = filepath
+                self.deck_data.extend(single_deck)
+                self.current_deck_paths.append(filepath)
 
-        for i, filepath in enumerate(self.current_deck_paths):
-            deck_name = os.path.splitext(selected_files[i])[0]
-            print(f"Loading: {deck_name} ({filepath})")
-            cards = load_deck(filepath)
-            # Check if load_deck indicated error (returned []) or file not found
-            if not cards and not os.path.exists(filepath):
-                 print(f"Error loading {deck_name}.")
-                 # load_deck should have shown a messagebox
-                 load_errors = True
-                 # Remove the problematic path from current_deck_paths
-                 self.current_deck_paths.remove(filepath)
-                 continue # Skip this deck
-            elif not cards and os.path.exists(filepath):
-                 print(f"Info: Deck '{deck_name}' is empty or has format issues.")
-                 # Allow loading empty decks, load_deck would show error for format issues
-
-            # Add filepath to each card for tracking
-            for card in cards:
-                card['deck_filepath'] = filepath
-            combined_deck_data.extend(cards)
-            loaded_deck_names.append(deck_name)
-
-        self.deck_data = combined_deck_data
-
-        # Update loaded deck names based on successful loads
-        loaded_deck_names = [os.path.splitext(os.path.basename(p))[0] for p in self.current_deck_paths]
-        deck_context = f"'{', '.join(loaded_deck_names)}'" if loaded_deck_names else "selected decks"
-
-
-        if not self.deck_data and load_errors:
-             self.update_status("Failed to load any valid deck data.")
-             self.front_label.configure(text="Loading failed. Check console/errors.")
-             self.settings_button.configure(state="disabled")
-             self.stats_button.configure(state="disabled")
+        if not self.deck_data and not load_errors:
+             messagebox.showwarning("No Cards", "Selected deck(s) contain no valid flashcards.")
+             self.reset_session_state()
+             self._display_label_content(self.front_label, "Selected deck(s) are empty.")
+             self.update_status("Load failed or deck(s) empty.")
              return
-        elif not self.deck_data and not load_errors and self.current_deck_paths:
-            # Selected files might exist but be empty
-            self.update_status(f"Loaded {deck_context}. Decks are empty.")
-            self.front_label.configure(text="Selected deck(s) are empty.")
-            # Allow adding if only one deck selected, allow settings/stats if any deck loaded
-            self.add_card_button.configure(state="normal" if len(self.current_deck_paths) == 1 else "disabled")
-            self.settings_button.configure(state="normal" if self.current_deck_paths else "disabled")
-            self.stats_button.configure(state="normal" if self.current_deck_paths else "disabled")
-            self.update_due_count()
-            return
-        elif not self.current_deck_paths: # All selected decks failed to load
-            self.update_status("Failed to load selected deck(s).")
-            self.front_label.configure(text="Select valid deck(s) and load.")
-            self.settings_button.configure(state="disabled")
-            self.stats_button.configure(state="disabled")
-            return
 
+        if load_errors and not self.deck_data:
+             messagebox.showerror("Load Failed", "Failed to load any cards. Check CSV format and file permissions.")
+             self.reset_session_state()
+             self._display_label_content(self.front_label, "Failed to load deck(s).")
+             self.update_status("Load failed.")
+             return
 
-        # Decks loaded, process due cards
         self.due_cards = get_due_cards(self.deck_data)
         random.shuffle(self.due_cards)
+        self.current_card_index = 0
+        self._is_review_active = True
 
-        # Enable/disable Add Card based on how many decks were successfully loaded
-        self.add_card_button.configure(state="normal" if len(self.current_deck_paths) == 1 else "disabled")
-        # Enable Settings/Stats buttons as decks are loaded
+        self.add_card_button.configure(state="normal")
         self.settings_button.configure(state="normal")
         self.stats_button.configure(state="normal")
 
         if not self.due_cards:
-            self.current_card_index = -1
             self._is_review_active = False
-            self.front_label.configure(text=f"No cards due in {deck_context} today!")
+            self.update_status(f"Loaded {len(self.deck_data)} card(s) from {len(self.current_deck_paths)} deck(s). No cards due now.")
+            self._display_label_content(self.front_label, f"No cards due right now in '{', '.join(selected_names)}'.")
             self.show_answer_button.configure(state="disabled")
-            self.update_status(f"Loaded {deck_context}. No cards due.")
         else:
-            self.current_card_index = 0
-            self.display_card() # Show the first due card
-            self.update_status(f"Loaded {deck_context}. {len(self.due_cards)} cards due.")
+            self.update_status(f"Loaded {len(self.deck_data)} card(s). Starting review with {len(self.due_cards)} due card(s).")
+            self.display_card()
 
         self.update_due_count()
 
-    def show_answer(self):
-        """Reveals the back of the card and shows rating buttons."""
-        if not self._is_review_active:
-            return
 
-        self.showing_answer = True
-        card = self.due_cards[self.current_card_index]
-        self.back_label.configure(text=f"Back:\n\n{card['back']}")
+    def save_all_dirty_cards(self):
+        dirty_cards_by_file = defaultdict(list)
+        for card in self.deck_data:
+            if card.get('_dirty', False):
+                filepath = card.get('deck_filepath')
+                if filepath:
+                    dirty_cards_by_file[filepath].append(card)
+                else:
+                    print(f"Warning: Dirty card missing 'deck_filepath'. Cannot save: {card.get('front', 'N/A')}")
 
-        self.show_answer_button.pack_forget()
-        self.back_label.pack(pady=(5, 10), padx=10)
-        self.rating_frame.pack(side="top", pady=5, fill="x")
+        if not dirty_cards_by_file: return
 
-    def rate_card(self, quality: int):
-        """Processes rating, saves the specific deck file, moves to next card."""
-        if not self.showing_answer or not self._is_review_active:
-            return
+        print(f"Saving changes to {len(dirty_cards_by_file)} file(s)...")
+        saved_files = 0
+        for filepath, cards_to_save in dirty_cards_by_file.items():
+             full_deck_for_file = [c for c in self.deck_data if c.get('deck_filepath') == filepath]
+             if not full_deck_for_file:
+                  print(f"Warning: Could not find full deck data for saving '{os.path.basename(filepath)}'. Skipping.")
+                  continue
+             print(f"Saving {len(cards_to_save)} modified card(s) to {os.path.basename(filepath)} (out of {len(full_deck_for_file)} total in file)...")
+             save_deck(filepath, full_deck_for_file)
+             saved_files += 1
 
-        card_to_update = self.due_cards[self.current_card_index]
-        original_filepath = card_to_update.get('deck_filepath')
-
-        if not original_filepath:
-            messagebox.showerror("Error", "Cannot save card: Original deck filepath not found.", parent=self)
-            # Maybe skip to next card without saving? Or stop?
-            self.current_card_index += 1
-            self.display_card()
-            return
-
-        update_card_schedule(card_to_update, quality)
-
-        if card_to_update.get('_dirty'):
-            # Filter the main deck data to get only cards belonging to the file we need to save
-            cards_for_this_file = [card for card in self.deck_data if card.get('deck_filepath') == original_filepath]
-
-            if not cards_for_this_file:
-                 # This shouldn't happen if the card came from deck_data
-                 print(f"Error: Could not find cards for file '{original_filepath}' in main data.")
-                 self.update_status(f"Card rated ({quality}). Save failed (data mismatch).")
-            else:
-                 # Save only the relevant deck file
-                 save_deck(original_filepath, cards_for_this_file)
-                 # save_deck resets the _dirty flag on the card objects within cards_for_this_file,
-                 # which are the same objects as in self.deck_data and self.due_cards.
-                 self.update_status(f"Card rated ({quality}). Saved '{os.path.basename(original_filepath)}'.")
-        else:
-             self.update_status(f"Card rated ({quality}). No schedule change.")
+        if saved_files > 0:
+             self.update_status(f"Saved changes to {saved_files} deck file(s).")
 
 
-        # Move to the next card
-        self.current_card_index += 1
-        self.display_card()
+    def reset_session_state(self):
+        self.save_all_dirty_cards()
+        self.current_deck_paths = []
+        self.deck_data = []
+        self.due_cards = []
+        self.current_card_index = -1
+        self.showing_answer = False
+        self._is_review_active = False
+        self._math_image_cache = {} # Clear cache
+        self.add_card_button.configure(state="disabled")
+        self.settings_button.configure(state="disabled")
+        self.stats_button.configure(state="disabled")
+        self.show_answer_button.configure(state="disabled")
+        self.rating_frame.pack_forget()
+        self.update_due_count()
 
-    # --- Add Card Functionality ---
 
+    # --- Window Management ---
     def open_add_card_window(self):
-        """Opens add card window ONLY if exactly one deck is loaded."""
-        if len(self.current_deck_paths) != 1:
-             messagebox.showwarning("Add Card Disabled", "Please load exactly one deck to add new cards.", parent=self)
-             return
-
         if self.add_card_window is not None and self.add_card_window.winfo_exists():
-            self.add_card_window.focus()
-            return
+            self.add_card_window.focus(); return
 
-        # Now we know exactly one deck is loaded
+        if not self.current_deck_paths:
+             messagebox.showerror("Error", "Please load at least one deck before adding a card."); return
+        elif len(self.current_deck_paths) > 1:
+             messagebox.showwarning("Multiple Decks", "Multiple decks loaded. Card will be added to the *first* loaded deck:\n" + os.path.basename(self.current_deck_paths[0]))
+
         target_deck_path = self.current_deck_paths[0]
-        target_deck_name = os.path.splitext(os.path.basename(target_deck_path))[0]
 
         self.add_card_window = ctk.CTkToplevel(self)
-        self.add_card_window.title(f"Add Card to: {target_deck_name}")
-        self.add_card_window.geometry("400x250")
+        self.add_card_window.title("Add New Card")
+        self.add_card_window.geometry("450x300")
         self.add_card_window.transient(self)
         self.add_card_window.grab_set()
-        self.add_card_window.protocol("WM_DELETE_WINDOW", self._on_add_card_close)
+        self.center_toplevel(self.add_card_window)
 
-        # --- Widgets (Same as before) ---
-        front_frame = ctk.CTkFrame(self.add_card_window)
-        front_frame.pack(pady=10, padx=10, fill="x")
-        ctk.CTkLabel(front_frame, text="Front:").pack(side="left", padx=5)
-        front_entry = ctk.CTkEntry(front_frame, width=300)
-        front_entry.pack(side="left", fill="x", expand=True)
+        ctk.CTkLabel(self.add_card_window, text="Front:").pack(pady=(10,0), padx=10, anchor="w")
+        front_entry = ctk.CTkTextbox(self.add_card_window, height=60, wrap="word")
+        front_entry.pack(pady=5, padx=10, fill="x")
 
-        back_frame = ctk.CTkFrame(self.add_card_window)
-        back_frame.pack(pady=10, padx=10, fill="x")
-        ctk.CTkLabel(back_frame, text="Back: ").pack(side="left", padx=5)
-        back_entry = ctk.CTkEntry(back_frame, width=300)
-        back_entry.pack(side="left", fill="x", expand=True)
+        ctk.CTkLabel(self.add_card_window, text="Back:").pack(pady=(5,0), padx=10, anchor="w")
+        back_entry = ctk.CTkTextbox(self.add_card_window, height=80, wrap="word")
+        back_entry.pack(pady=5, padx=10, fill="x")
 
         button_frame = ctk.CTkFrame(self.add_card_window)
-        button_frame.pack(pady=20, padx=10, fill="x")
+        button_frame.pack(pady=(10, 10), padx=10, fill="x")
 
-        self.add_card_window.front_entry = front_entry
-        self.add_card_window.back_entry = back_entry
+        def submit_card():
+            front = front_entry.get("1.0", tk.END).strip()
+            back = back_entry.get("1.0", tk.END).strip()
+            if not front or not back:
+                messagebox.showerror("Error", "Both Front and Back fields are required.", parent=self.add_card_window); return
 
-        save_button = ctk.CTkButton(button_frame, text="Save Card", command=self.save_new_card)
-        save_button.pack(side="left", padx=10, expand=True)
-        cancel_button = ctk.CTkButton(button_frame, text="Cancel", command=self._on_add_card_close)
-        cancel_button.pack(side="right", padx=10, expand=True)
-
-        # --- Bindings & Focus ---
-        front_entry.focus()
-        front_entry.bind("<Return>", lambda event: back_entry.focus())
-        back_entry.bind("<Return>", lambda event: self.save_new_card())
-        self.add_card_window.bind("<Escape>", lambda event: self._on_add_card_close())
-
-    def save_new_card(self):
-        """Saves the new card to the currently loaded single deck."""
-        if len(self.current_deck_paths) != 1: # Safety check
-            messagebox.showerror("Error", "Cannot save: No single deck loaded.", parent=self.add_card_window)
-            return
-
-        target_deck_path = self.current_deck_paths[0]
-
-        # Ensure window and entries exist
-        if not (self.add_card_window and self.add_card_window.winfo_exists()): return
-        front_entry = getattr(self.add_card_window, 'front_entry', None)
-        back_entry = getattr(self.add_card_window, 'back_entry', None)
-        if not front_entry or not back_entry: return
-
-        front = front_entry.get().strip()
-        back = back_entry.get().strip()
-
-        if not front or not back:
-            messagebox.showwarning("Input Required", "Both 'Front' and 'Back' fields must be filled.", parent=self.add_card_window)
-            if not front: front_entry.focus()
-            else: back_entry.focus()
-            return
-
-        # Check if deck data is still loaded (should be)
-        if self.deck_data is None:
-             messagebox.showerror("Error", "Deck data lost. Cannot save card.", parent=self.add_card_window)
-             self._on_add_card_close()
-             return
-
-        try:
             new_card = {
-                'front': front, 'back': back,
-                'next_review_date': None, # New cards are due immediately
-                'interval_days': INITIAL_INTERVAL_DAYS,
-                'original_row_index': 'NEW',
-                'deck_filepath': target_deck_path, # Assign the correct filepath
-                '_dirty': True
+                'front': front, 'back': back, 'next_review_date': None,
+                'interval_days': 0.0, 'deck_filepath': target_deck_path, '_dirty': True
             }
-
-            # Append to the main in-memory deck list
             self.deck_data.append(new_card)
-
-            # Filter data for saving just this deck
-            cards_for_this_file = [card for card in self.deck_data if card.get('deck_filepath') == target_deck_path]
-
-            # Save the target deck file
-            save_deck(target_deck_path, cards_for_this_file)
-
-            messagebox.showinfo("Success", "New card added and saved successfully!", parent=self.add_card_window)
-            self._on_add_card_close()
-
-            deck_name = os.path.splitext(os.path.basename(target_deck_path))[0]
-            self.update_status(f"New card added to '{deck_name}'.")
-
-            # Refresh due count as the new card is due
+            self.update_status(f"Added new card to '{os.path.basename(target_deck_path)}'.")
             self.update_due_count()
+            self.save_all_dirty_cards() # Save immediately
 
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to save new card:\n{e}", parent=self.add_card_window)
+            front_entry.delete("1.0", tk.END)
+            back_entry.delete("1.0", tk.END)
+            front_entry.focus_set()
 
-    def _on_add_card_close(self):
-        """Handles closing the add card window gracefully."""
-        if self.add_card_window and self.add_card_window.winfo_exists():
-            self.add_card_window.grab_release()
-            self.add_card_window.destroy()
-        self.add_card_window = None
+        def cancel_add(): self.add_card_window.destroy()
 
-    # --- Settings Functionality ---
+        add_button = ctk.CTkButton(button_frame, text="Add Card", command=submit_card)
+        add_button.pack(side="left", padx=(0, 10), expand=True)
+        cancel_button = ctk.CTkButton(button_frame, text="Close", command=cancel_add, fg_color="gray")
+        cancel_button.pack(side="right", padx=(10, 0), expand=True)
+
+        front_entry.bind("<Return>", lambda event: submit_card())
+        back_entry.bind("<Return>", lambda event: submit_card())
+        self.add_card_window.bind("<Escape>", lambda event: cancel_add())
+        front_entry.focus_set()
+
 
     def open_settings_window(self):
-        """Opens the settings window."""
-        if not self.current_deck_paths:
-            messagebox.showwarning("Settings Disabled", "Please load at least one deck to access settings.", parent=self)
-            return
-
         if self.settings_window is not None and self.settings_window.winfo_exists():
-            self.settings_window.focus()
-            return
+            self.settings_window.focus(); return
 
         self.settings_window = ctk.CTkToplevel(self)
-        self.settings_window.title("Deck Settings")
-        self.settings_window.geometry("500x400")
+        self.settings_window.title("Settings")
+        self.settings_window.geometry("300x200")
         self.settings_window.transient(self)
         self.settings_window.grab_set()
-        self.settings_window.protocol("WM_DELETE_WINDOW", self._on_settings_close)
+        self.center_toplevel(self.settings_window)
 
-        # --- Settings Widgets ---
-        settings_frame = ctk.CTkFrame(self.settings_window)
-        settings_frame.pack(pady=10, padx=10, fill="both", expand=True)
+        ctk.CTkLabel(self.settings_window, text="Settings (Placeholder)").pack(pady=20)
+        close_button = ctk.CTkButton(self.settings_window, text="Close", command=self.settings_window.destroy)
+        close_button.pack(pady=10)
+        self.settings_window.bind("<Escape>", lambda event: self.settings_window.destroy())
 
-        ctk.CTkLabel(settings_frame, text="Loaded Decks:").pack(anchor="w", padx=5, pady=(0,5))
-
-        # Listbox to show loaded decks
-        deck_info_listbox = tk.Listbox(settings_frame, height=8, exportselection=False,
-                                        bg="#2B2B2B", fg="#DCE4EE",
-                                        selectbackground="#1F6AA5", selectforeground="white",
-                                        borderwidth=0, highlightthickness=1,
-                                        highlightbackground="#565B5E",
-                                        highlightcolor="#1F6AA5")
-        deck_info_listbox.pack(fill="x", expand=True, padx=5, pady=5)
-        self.settings_window.deck_info_listbox = deck_info_listbox # Store reference
-
-        # Populate the listbox
-        self.populate_settings_deck_list()
-
-        # --- Deck Actions Frame ---
-        actions_frame = ctk.CTkFrame(settings_frame)
-        actions_frame.pack(pady=10, padx=5, fill="x")
-
-        ctk.CTkLabel(actions_frame, text="Actions for Selected Deck:").pack(anchor="w", pady=(0,5))
-
-        reset_button = ctk.CTkButton(actions_frame, text="Reset Progress", command=self.reset_selected_deck_progress)
-        reset_button.pack(side="left", padx=5)
-
-        # Add more actions here later (e.g., rename, delete - require careful implementation)
-
-        # --- Close Button ---
-        close_button = ctk.CTkButton(settings_frame, text="Close", command=self._on_settings_close)
-        close_button.pack(pady=(15, 5))
-
-        # --- Bindings & Focus ---
-        self.settings_window.bind("<Escape>", lambda event: self._on_settings_close())
-
-
-    def populate_settings_deck_list(self):
-        """Populates the listbox in the settings window with deck info."""
-        if not (self.settings_window and self.settings_window.winfo_exists()):
-            return
-        listbox = getattr(self.settings_window, 'deck_info_listbox', None)
-        if not listbox: return
-
-        listbox.delete(0, tk.END) # Clear existing
-
-        if not self.current_deck_paths:
-            listbox.insert(tk.END, " No decks loaded.")
-            listbox.configure(state="disabled")
-            return
-
-        listbox.configure(state="normal")
-        for deck_path in self.current_deck_paths:
-            deck_name = os.path.splitext(os.path.basename(deck_path))[0]
-            cards_in_deck = [card for card in self.deck_data if card.get('deck_filepath') == deck_path]
-            total_cards = len(cards_in_deck)
-            # Add more stats if needed (e.g., due count for this specific deck)
-            listbox.insert(tk.END, f" {deck_name} ({total_cards} cards)")
-
-
-    def reset_selected_deck_progress(self):
-        """Resets all cards in the selected deck to 'new' state."""
-        if not (self.settings_window and self.settings_window.winfo_exists()):
-            return
-        listbox = getattr(self.settings_window, 'deck_info_listbox', None)
-        if not listbox: return
-
-        selected_indices = listbox.curselection()
-        if not selected_indices:
-            messagebox.showwarning("No Selection", "Please select a deck from the list to reset.", parent=self.settings_window)
-            return
-
-        selected_deck_index = selected_indices[0] # Only handle one selection for now
-        try:
-            target_deck_path = self.current_deck_paths[selected_deck_index]
-            target_deck_name = os.path.splitext(os.path.basename(target_deck_path))[0]
-        except IndexError:
-            messagebox.showerror("Error", "Could not find the selected deck.", parent=self.settings_window)
-            self.populate_settings_deck_list() # Refresh list
-            return
-
-        confirm = messagebox.askyesno("Confirm Reset",
-                                      f"Are you sure you want to reset all progress for the deck '{target_deck_name}'?\n"
-                                      f"All cards will become 'new' (due today, initial interval). This cannot be undone easily.",
-                                      parent=self.settings_window)
-
-        if not confirm:
-            return
-
-        # Find cards belonging to the target deck
-        cards_to_reset = [card for card in self.deck_data if card.get('deck_filepath') == target_deck_path]
-
-        if not cards_to_reset:
-            messagebox.showinfo("Info", f"No cards found in memory for deck '{target_deck_name}'. Nothing to reset.", parent=self.settings_window)
-            return
-
-        # Reset progress and mark dirty
-        cards_modified = 0
-        for card in cards_to_reset:
-            # Check if modification is needed
-            if card.get('next_review_date') is not None or card.get('interval_days') != INITIAL_INTERVAL_DAYS:
-                card['next_review_date'] = None # Due immediately
-                card['interval_days'] = INITIAL_INTERVAL_DAYS
-                card['_dirty'] = True
-                cards_modified += 1
-
-        if cards_modified == 0:
-             messagebox.showinfo("Info", f"All cards in '{target_deck_name}' were already in the initial state. No changes made.", parent=self.settings_window)
-             return
-
-        # Save the modified deck
-        save_deck(target_deck_path, cards_to_reset)
-
-        messagebox.showinfo("Success", f"Progress for deck '{target_deck_name}' ({cards_modified} cards) has been reset and saved.", parent=self.settings_window)
-
-        # Refresh main UI state (due counts, potentially current review session)
-        self.refresh_after_settings_change()
-
-
-    def refresh_after_settings_change(self):
-        """Refreshes the main UI after changes in settings (e.g., deck reset)."""
-        # Recalculate due cards based on potentially modified deck_data
-        self.due_cards = get_due_cards(self.deck_data)
-        random.shuffle(self.due_cards)
-
-        # If a review was active, restart it from the beginning of the new due list
-        if self._is_review_active or self.current_card_index != -1:
-            self.current_card_index = 0 if self.due_cards else -1
-            self.display_card() # Display the first card or the "complete/no due" message
-        else:
-            # If no review was active, just update the due count display
-            self.update_due_count()
-
-        # Refresh the settings window list as well, in case stats changed
-        self.populate_settings_deck_list()
-
-
-    def _on_settings_close(self):
-        """Handles closing the settings window gracefully."""
-        if self.settings_window and self.settings_window.winfo_exists():
-            self.settings_window.grab_release()
-            self.settings_window.destroy()
-        self.settings_window = None
-
-    # --- Statistics Functionality ---
 
     def open_stats_window(self):
-        """Opens the statistics window."""
-        if not self.current_deck_paths:
-            messagebox.showwarning("Stats Disabled", "Please load at least one deck to view statistics.", parent=self)
-            return
-
+        if not self.deck_data:
+            messagebox.showinfo("Statistics", "No deck data loaded to calculate statistics."); return
         if self.stats_window is not None and self.stats_window.winfo_exists():
-            self.stats_window.focus()
-            return
+            self.stats_window.focus(); return
 
         self.stats_window = ctk.CTkToplevel(self)
         self.stats_window.title("Deck Statistics")
-        self.stats_window.geometry("450x400") # Adjusted size
+        self.stats_window.geometry("800x650")
         self.stats_window.transient(self)
-        self.stats_window.grab_set()
+        self.center_toplevel(self.stats_window)
         self.stats_window.protocol("WM_DELETE_WINDOW", self._on_stats_close)
 
-        # --- Stats Widgets ---
-        stats_frame = ctk.CTkFrame(self.stats_window)
-        stats_frame.pack(pady=10, padx=10, fill="both", expand=True)
+        stats_main_frame = ctk.CTkFrame(self.stats_window)
+        stats_main_frame.pack(pady=10, padx=10, fill="both", expand=True)
+        text_stats_frame = ctk.CTkFrame(stats_main_frame)
+        text_stats_frame.pack(pady=5, padx=5, fill="x")
+        plot_frame = ctk.CTkFrame(stats_main_frame)
+        plot_frame.pack(pady=5, padx=5, fill="both", expand=True)
+        self.stats_plot_frame = plot_frame # Store reference for theme updates
 
-        # Title Label
+        stats = calculate_deck_statistics(self.deck_data, forecast_days=STATS_FORECAST_DAYS)
+        # self.current_stats = stats # Store stats if needed for theme update redraw
+
+        stats_text_widget = ctk.CTkTextbox(text_stats_frame, wrap="word", height=200, activate_scrollbars=True)
+        stats_text_widget.pack(pady=5, padx=5, fill="x")
+        stats_text_widget.configure(state="normal")
+        stats_text_widget.delete("1.0", tk.END)
+
         loaded_deck_names = [os.path.splitext(os.path.basename(p))[0] for p in self.current_deck_paths]
-        title_text = f"Statistics for: {', '.join(loaded_deck_names)}" if loaded_deck_names else "Statistics (No Decks Loaded)"
-        ctk.CTkLabel(stats_frame, text=title_text, font=ctk.CTkFont(weight="bold")).pack(pady=(5, 10))
+        stats_text_widget.insert(tk.END, f"Statistics for Deck(s): {', '.join(loaded_deck_names)}\n")
+        stats_text_widget.insert(tk.END, f"----------------------------------------\n")
+        stats_text_widget.insert(tk.END, f"Total Cards:\t\t{stats['total_cards']}\n")
+        stats_text_widget.insert(tk.END, f"  - New Cards:\t\t{stats['new_cards']}\n")
+        stats_text_widget.insert(tk.END, f"  - Learning Cards (<{21}d):\t{stats['learning_cards']}\n")
+        stats_text_widget.insert(tk.END, f"  - Young Cards (<{90}d):\t{stats['young_cards']}\n")
+        stats_text_widget.insert(tk.END, f"  - Mature Cards (>= {90}d):\t{stats['mature_cards']}\n")
+        stats_text_widget.insert(tk.END, f"Average Interval (Mature):\t{stats['average_interval_mature']} days\n\n")
+        stats_text_widget.insert(tk.END, f"Due Today:\t\t{stats['due_today']}\n")
+        stats_text_widget.insert(tk.END, f"Due Tomorrow:\t\t{stats['due_tomorrow']}\n")
+        stats_text_widget.insert(tk.END, f"Due in Next 7 Days:\t{stats['due_next_7_days']} (excluding today)\n")
+        stats_text_widget.insert(tk.END, f"----------------------------------------\n")
+        stats_text_widget.configure(state="disabled")
 
-        # Frame for the stats grid
-        grid_frame = ctk.CTkFrame(stats_frame)
-        grid_frame.pack(pady=5, padx=5, fill="x")
-        grid_frame.columnconfigure(1, weight=1) # Make value column expand
+        if MATPLOTLIB_AVAILABLE:
+            try:
+                self._create_stats_chart(plot_frame, stats)
+            except Exception as e:
+                 error_label = ctk.CTkLabel(plot_frame, text=f"Error creating plot: {e}", text_color="red")
+                 error_label.pack(pady=10)
+                 print(f"Matplotlib Error: {e}")
+        else:
+            no_mpl_label = ctk.CTkLabel(plot_frame, text="Matplotlib not installed. Plotting disabled.\n(Run: pip install matplotlib)", text_color="orange")
+            no_mpl_label.pack(pady=20)
 
-        # Create labels for stats (will be populated by _update_stats_display)
-        self.stats_window.stat_labels = {} # Dictionary to hold the value labels
-        stat_items = [
-            ("Total Cards:", "total_cards"),
-            ("Due Today:", "due_today"),
-            ("Due Tomorrow:", "due_tomorrow"),
-            ("Due Next 7 Days:", "due_next_7_days"),
-            ("New Cards:", "new_cards"),
-            ("Learning/Review Cards:", "learning_review_cards"),
-            ("Average Interval (days):", "average_interval"),
-        ]
-
-        for i, (label_text, key) in enumerate(stat_items):
-            label = ctk.CTkLabel(grid_frame, text=label_text, anchor="w")
-            label.grid(row=i, column=0, padx=10, pady=3, sticky="w")
-            value_label = ctk.CTkLabel(grid_frame, text="...", anchor="e") # Placeholder text
-            value_label.grid(row=i, column=1, padx=10, pady=3, sticky="ew")
-            self.stats_window.stat_labels[key] = value_label # Store reference to value label
-
-        # --- Buttons Frame ---
-        button_frame = ctk.CTkFrame(stats_frame)
-        button_frame.pack(pady=(15, 5), fill="x")
-
-        refresh_button = ctk.CTkButton(button_frame, text="Refresh", command=self._update_stats_display)
-        refresh_button.pack(side="left", padx=10, expand=True)
-
-        close_button = ctk.CTkButton(button_frame, text="Close", command=self._on_stats_close)
-        close_button.pack(side="right", padx=10, expand=True)
-
-        # --- Bindings & Initial Population ---
+        close_button = ctk.CTkButton(stats_main_frame, text="Close", command=self._on_stats_close)
+        close_button.pack(pady=(5, 10))
         self.stats_window.bind("<Escape>", lambda event: self._on_stats_close())
-        self._update_stats_display() # Populate with initial stats
 
 
-    def _update_stats_display(self):
-        """Calculates stats and updates the labels in the stats window."""
-        if not (self.stats_window and self.stats_window.winfo_exists()):
-            return
+    def _create_stats_chart(self, parent_frame: ctk.CTkFrame, stats: Dict[str, Any]):
+        """Creates and embeds the Matplotlib forecast chart."""
+        # Clear previous widgets in the parent frame before drawing new ones
+        for widget in parent_frame.winfo_children():
+            widget.destroy()
+        self.stats_figure_canvas = None # Reset references
+        self.stats_toolbar = None
 
-        stats = calculate_deck_statistics(self.deck_data)
+        forecast_data = stats.get("due_counts_forecast", {})
+        if not forecast_data:
+            ctk.CTkLabel(parent_frame, text="No forecast data available.").pack(pady=10); return
 
-        for key, label_widget in self.stats_window.stat_labels.items():
-            value = stats.get(key, "N/A") # Get value from calculated stats
-            label_widget.configure(text=str(value))
+        dates = list(forecast_data.keys())
+        counts = list(forecast_data.values())
+        cumulative_counts = [sum(counts[:i+1]) for i in range(len(counts))]
+
+        # Get current theme colors for the plot using the stored values
+        plot_bg_color = self._current_bg_color
+        plot_text_color = self._current_text_color
+        bar_color = "#1f77b4" # Example blue
+        line_color = "#ff7f0e" # Example orange
+
+        fig = Figure(figsize=(7, 4), dpi=100, facecolor=plot_bg_color)
+        ax1 = fig.add_subplot(111)
+        ax1.set_facecolor(plot_bg_color) # Set axes background too
+
+        ax1.bar(dates, counts, label='Cards Due Daily', color=bar_color, width=0.7)
+        ax1.set_xlabel("Date", color=plot_text_color)
+        ax1.set_ylabel("Cards Due", color=bar_color)
+        ax1.tick_params(axis='y', labelcolor=bar_color, colors=plot_text_color) # Label color vs tick text color
+        ax1.tick_params(axis='x', rotation=45, colors=plot_text_color)
+        ax1.grid(True, axis='y', linestyle='--', alpha=0.6, color=plot_text_color)
+
+        ax2 = ax1.twinx()
+        ax2.plot(dates, cumulative_counts, label='Cumulative Due', color=line_color, marker='.', linestyle='-')
+        ax2.set_ylabel("Total Cumulative Cards", color=line_color)
+        ax2.tick_params(axis='y', labelcolor=line_color, colors=plot_text_color)
+
+        fig.suptitle("Review Forecast", color=plot_text_color)
+        ax1.set_title(f"Next {STATS_FORECAST_DAYS} Days", fontsize=10, color=plot_text_color)
+
+        # Set spine colors
+        for spine in ax1.spines.values(): spine.set_edgecolor(plot_text_color)
+        for spine in ax2.spines.values(): spine.set_edgecolor(plot_text_color)
+
+        fig.tight_layout(rect=[0, 0.03, 1, 0.95])
+
+        self.stats_figure_canvas = FigureCanvasTkAgg(fig, master=parent_frame)
+        canvas_widget = self.stats_figure_canvas.get_tk_widget()
+        canvas_widget.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+        self.stats_toolbar = NavigationToolbar2Tk(self.stats_figure_canvas, parent_frame, pack_toolbar=False)
+        # --- Try to style toolbar (basic) ---
+        try:
+             # Use a background color that contrasts well in both light/dark
+             toolbar_bg = self._apply_appearance_mode(ctk.ThemeManager.theme["CTkFrame"]["bg_color"]) # e.g., window background
+             toolbar_fg = plot_text_color
+             self.stats_toolbar.configure(background=toolbar_bg)
+             # Style toolbar buttons if possible (might depend on Tk version/theme)
+             for item in self.stats_toolbar.winfo_children():
+                 try:
+                     item.configure(bg=toolbar_bg, fg=toolbar_fg)
+                     # For ttk buttons, styling might differ
+                     if hasattr(item, 'style'):
+                          pass # More complex ttk styling could go here
+                 except tk.TclError:
+                     pass # Ignore widgets that don't support bg/fg config
+        except Exception as e:
+             print(f"Minor error styling toolbar: {e}") # Non-critical
+        # --- End toolbar styling ---
+        self.stats_toolbar.update()
+        self.stats_toolbar.pack(side=tk.BOTTOM, fill=tk.X)
+
+        self.stats_figure_canvas.draw()
 
 
     def _on_stats_close(self):
-        """Handles closing the stats window gracefully."""
-        if self.stats_window and self.stats_window.winfo_exists():
-            self.stats_window.grab_release()
-            self.stats_window.destroy()
+        if self.stats_figure_canvas:
+            try:
+                # Destroy Tkinter widgets first
+                self.stats_figure_canvas.get_tk_widget().destroy()
+                if self.stats_toolbar: self.stats_toolbar.destroy()
+                # Then clean up Matplotlib figure
+                plt.close(self.stats_figure_canvas.figure)
+            except Exception as e: print(f"Error closing stats canvas/toolbar: {e}")
+
+        self.stats_figure_canvas = None
+        self.stats_toolbar = None
+        self.stats_plot_frame = None # Clear reference
+        if self.stats_window:
+            try: self.stats_window.destroy()
+            except Exception as e: print(f"Error closing stats window: {e}")
         self.stats_window = None
 
 
-    # --- Keyboard Shortcuts ---
-    def _setup_shortcuts(self):
-        """Binds common Anki keyboard shortcuts."""
-        self.bind_all("<Key>", self._handle_key_press)
-        self.bind_all("<space>", lambda e: self._handle_key_press(e, force_space=True))
-        self.bind_all("<Return>", lambda e: self._handle_key_press(e, force_return=True))
+    def center_toplevel(self, window: ctk.CTkToplevel):
+         window.update_idletasks()
+         main_x, main_y = self.winfo_x(), self.winfo_y()
+         main_w, main_h = self.winfo_width(), self.winfo_height()
+         win_w, win_h = window.winfo_width(), window.winfo_height()
+         x = main_x + (main_w // 2) - (win_w // 2)
+         y = main_y + (main_h // 2) - (win_h // 2)
+         window.geometry(f"+{x}+{y}")
 
-    def _handle_key_press(self, event, force_space=False, force_return=False):
-        """Handles key presses for shortcuts."""
-        # Ignore if modal window is active (Add Card, Settings, or Stats)
-        if self.grab_set_applied() or \
-           (self.add_card_window and self.add_card_window.winfo_exists()) or \
-           (self.settings_window and self.settings_window.winfo_exists()) or \
-           (self.stats_window and self.stats_window.winfo_exists()): # Added check for stats window
-            focused_widget = self.focus_get()
-            # Allow typing in Entry widgets within the modal windows
-            if isinstance(focused_widget, (ctk.CTkEntry, tk.Entry)):
-                 top_level = focused_widget.winfo_toplevel()
-                 if top_level in (self.add_card_window, self.settings_window, self.stats_window):
-                      return
-            # Block shortcuts otherwise when modal is up
-            return
+
+    # --- Event Handling & Shortcuts ---
+    def _setup_shortcuts(self):
+        self.bind("<KeyPress>", self._handle_keypress)
+
+    def _handle_keypress(self, event):
+        active_grab = self.grab_current()
+        if active_grab and active_grab != self:
+             if event.widget.winfo_toplevel() == active_grab: return
+             else: return
 
         key_sym = event.keysym
+        is_space = key_sym == "space"
+        is_return = key_sym == "Return"
+        is_a = key_sym.lower() == "a"
 
-        # Add Card Shortcut (A) - only if exactly ONE deck loaded
-        if key_sym.lower() == 'a':
-            if len(self.current_deck_paths) == 1: # Check if exactly one deck loaded
-                self.open_add_card_window()
-            else:
-                # Optionally provide feedback if user presses 'A' in multi-deck mode
-                # print("Info: Add card shortcut disabled in multi-deck mode.")
-                pass
-            return # Consume event
+        # Global: Add Card
+        if is_a and self.add_card_button.cget("state") == "normal":
+            self.open_add_card_window(); return
 
+        # Review Shortcuts
+        if not self._is_review_active: return
 
-        # Review Shortcuts - only if review is active
-        if not self._is_review_active:
-             return
-
-        # Show Answer / Rate Good (Space or Enter)
-        if force_space or force_return:
-            if self.showing_answer:
-                 self.rate_card(3)
-            else:
-                 self.show_answer()
+        if is_space or is_return:
+            if self.showing_answer: self.rate_card(3) # Rate Good
+            else: self.show_answer()
             return
 
-        # Rating keys (1, 2, 3, 4) - only when answer is shown
-        if key_sym in ('1', '2', '3', '4'):
-             if self.showing_answer:
-                  quality = int(key_sym)
-                  self.rate_card(quality)
-             return
-
-    def grab_set_applied(self) -> bool:
-        """Checks if a grab is currently active on any window."""
-        try:
-            return self.grab_current() is not None
-        except tk.TclError:
-             return False
+        if key_sym in ('1', '2', '3', '4') and self.showing_answer:
+             self.rate_card(int(key_sym)); return
 
 
+    def on_close(self):
+        self.save_all_dirty_cards()
+        if self.stats_window is not None and self.stats_window.winfo_exists():
+             self._on_stats_close()
+        self.destroy()
+
+
+# --- Main Execution ---
 if __name__ == "__main__":
-    if not os.path.exists(DECKS_DIR):
+    # Basic checks for dependencies needed for math rendering
+    if not PIL_AVAILABLE:
         try:
-            os.makedirs(DECKS_DIR)
-            print(f"Created missing decks directory: '{DECKS_DIR}'")
-        except OSError as e:
-            root = tk.Tk(); root.withdraw()
-            messagebox.showerror("Startup Error", f"Could not create decks directory '{DECKS_DIR}': {e}\nPlease create it manually.")
-            root.destroy(); sys.exit(1)
+            root = ctk.CTk(); root.withdraw() # Need a root for messagebox
+            messagebox.showwarning("Missing Dependency", "Pillow library not found. Math rendering disabled.\nInstall using: pip install Pillow")
+            root.destroy()
+        except Exception as e: print(f"Error showing Pillow warning: {e}")
+        # Continue without math rendering
+    if not MATPLOTLIB_AVAILABLE:
+         try:
+             root = ctk.CTk(); root.withdraw()
+             messagebox.showwarning("Missing Dependency", "Matplotlib library not found. Stats and Math rendering disabled.\nInstall using: pip install matplotlib")
+             root.destroy()
+         except Exception as e: print(f"Error showing Matplotlib warning: {e}")
+         # Continue without stats/math
+
+    find_decks(DECKS_DIR) # Ensure decks directory exists
 
     app = FlashcardApp()
     app.mainloop()
-# --- END OF FILE PyAnki.py ---
