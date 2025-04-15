@@ -341,11 +341,120 @@ This project is licensed under the [MIT License](LICENSE.txt) <!-- Create a LICE
 *   [Pillow](https://python-pillow.org/) for image handling.
 *   The developers of the original [Anki](https://apps.ankiweb.net/) SRS for the inspiration and the SM-2 algorithm concept.
 
+
+---
+
+## File Structure
+
+```
+PyAnki-CSV/
+│
+├── PyAnki.py           # The main application script
+│
+├── decks/              # Folder containing your CSV deck files
+│   ├── deck1.csv
+│   ├── another_deck.csv
+│   └── example_deck.csv # Created automatically if folder is missing
+│
+└── README.md           # This file
 ```
 
-**Next Steps for You:**
+### Decks Folder
 
-1.  **Add Screenshots:** Take screenshots of your application in action and embed them in the designated section.
-2.  **Choose a License:** Decide on a license (MIT is a common choice for open source). Create a `LICENSE.txt` file in your repository containing the full license text and update the link/badge in the README if necessary.
-3.  **Update Repository URL:** Replace `https://github.com/your-username/PyAnki-CSV.git` with the actual URL of your GitHub repository.
-4.  **Review and Refine:** Read through the generated README to ensure it accurately reflects your project and is easy to understand. Adjust wording as needed.
+*   The application looks for `.csv` files exclusively within the `decks` subfolder, located in the same directory as `PyAnki.py`.
+*   Create this folder manually or let the application create it on the first run (it will add an `example_deck.csv`).
+*   Each `.csv` file in this folder represents a single deck.
+
+### CSV File Format Guide
+
+Understanding the CSV format is key to creating decks compatible with PyAnki CSV, especially if you plan to edit them outside the application (e.g., in a spreadsheet program or text editor).
+
+**1. File Encoding:**
+
+*   **Save your CSV files using UTF-8 encoding.** This is crucial for handling special characters, accents, and non-English text correctly.
+*   Most modern text editors and spreadsheet programs allow you to specify the encoding when saving. Choose "UTF-8".
+*   *(Note: The application reads using `utf-8-sig` to handle potential Byte Order Marks (BOM) sometimes added by programs like Excel, but saves using standard `utf-8`)*.
+
+**2. Header Row:**
+
+*   The **very first line** of your CSV file **must** be a header row containing column names separated by commas.
+*   **Headers are case-sensitive.** They must match the names listed below exactly.
+*   **Required Columns (Must be present):**
+    *   `front`: The text content displayed on the front of the flashcard.
+    *   `back`: The text content displayed on the back of the flashcard.
+    *   `next_review_date`: The date the card is next scheduled for review.
+    *   `interval_days`: The number of days between the last review and the `next_review_date`.
+*   **Optional SRS Columns (Managed by the App):** These columns store the spaced repetition data.
+    *   `ease_factor`: A number (usually starting around 2.5) representing how easy the card is. Lower means harder.
+    *   `lapses`: An integer counting how many times you've rated the card 'Again'.
+    *   `reviews`: An integer counting the total number of successful reviews (Hard, Good, Easy).
+    *   **Behavior:**
+        *   If these columns **exist** in your header, the application will read their values.
+        *   If they **do not exist**, the application will use default values internally (e.g., 2.5 ease, 0 lapses/reviews for new cards) and **will add these columns to the header** the next time the file is saved by the application.
+*   **Extra Columns (Preserved):**
+    *   You can include any other columns you like (e.g., `tags`, `notes`, `source`).
+    *   The application will ignore these columns for its core logic but will **preserve them** when reading and saving the file. This is useful for adding your own metadata.
+
+**3. Data Rows (One Row Per Card):**
+
+*   Each row after the header represents a single flashcard.
+*   The order of columns in the data rows must match the order defined in your header row.
+
+**4. Column Data Formatting:**
+
+*   **`front` / `back`:**
+    *   Plain text content for the card faces.
+    *   To include math notation, use LaTeX syntax enclosed in single dollar signs: `$E = mc^2$`. See [Math Rendering](#math-rendering) for details and limitations.
+    *   If your text contains commas, newlines, or double quotes, it **must** be enclosed in double quotes (`"`). Spreadsheet programs usually handle this automatically.
+        *   Example: `"This field contains a comma, and spans\ntwo lines."`
+        *   To include a literal double quote inside a quoted field, double it up: `"He said, ""Hello""."`
+*   **`next_review_date`:**
+    *   Must be in **`YYYY-MM-DD`** format (e.g., `2024-03-15`).
+    *   For **new cards**, leave this field **empty**. The application will treat it as due immediately (today).
+    *   If the format is invalid, the application will also treat the card as due immediately.
+*   **`interval_days`:**
+    *   A number representing the current review interval in days (can be a decimal, e.g., `3.5`).
+    *   For **new cards**, use `0`, `0.0`, or leave it **empty**.
+*   **`ease_factor`:**
+    *   A number (float, e.g., `2.5`, `1.95`).
+    *   If omitted for a new card or invalid, the default (`2.5`) will be used internally and saved later.
+*   **`lapses` / `reviews`:**
+    *   Whole numbers (integers, e.g., `0`, `1`, `5`).
+    *   If omitted for a new card or invalid, `0` will be used internally and saved later.
+*   **Extra Columns:**
+    *   Enter data as needed (e.g., `study_notes`, `lecture_1, concept_x`). Remember quoting rules if using commas within a tag list.
+
+**5. Important Notes & Common Issues:**
+
+*   **Encoding:** Always use **UTF-8**.
+*   **Headers:** Required headers (`front`, `back`, `next_review_date`, `interval_days`) **must** be present and spelled correctly (case-sensitive).
+*   **Empty Rows:** Blank lines in the CSV file might be skipped or cause issues. Ensure each card has its own row.
+*   **Missing `front`/`back`:** Rows without content in the `front` or `back` columns will likely be skipped.
+*   **Spreadsheet Software:** Programs like Excel, Google Sheets, or LibreOffice Calc are convenient for editing CSVs. Be sure to:
+    *   Select "CSV (Comma delimited) (*.csv)" as the file type when saving.
+    *   Verify UTF-8 encoding is selected in the save options.
+    *   Be careful that the software doesn't automatically change date formats or number formats in ways incompatible with the application. Set date columns to `YYYY-MM-DD` format explicitly if possible.
+*   **Text Editors:** When using a plain text editor, manually ensure commas separate fields and use double quotes (`"..."`) around fields containing commas, newlines, or double quotes themselves.
+
+**Example `my_deck.csv`:**
+
+```csv
+front,back,next_review_date,interval_days,ease_factor,lapses,reviews,tags,source_page
+"What is the capital of Spain?",Madrid,2024-04-10,12.5,2.65,0,5,"geography, europe",p. 34
+"Chemical symbol for Gold?",Au,,,2.5,0,0,"chemistry, elements",
+"Explain $F=ma$ in words.","Newton's Second Law: Force equals mass times acceleration.",2024-03-20,2.0,2.35,1,2,"physics, newton",Lec 2 Slide 5
+"Card with quotes and comma","This field contains ""quotes"" and a comma, plus a newline\nhere.",,,2.5,0,0,example,
+"Another New Card","Its answer.",,,,0,0,misc,
+```
+
+This example shows:
+*   A reviewed card (`Madrid`).
+*   A new card (`Au`) with empty date/interval and default SRS values assumed internally.
+*   A card using math rendering (`F=ma`).
+*   A card demonstrating quoting rules for commas, quotes, and newlines.
+*   A new card (`Another New Card`) explicitly showing `0` for lapses/reviews.
+*   Extra columns (`tags`, `source_page`) being used and preserved.
+
+By following these guidelines, you can reliably create and manage your flashcard decks for use with PyAnki CSV.
+
+---
