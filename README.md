@@ -90,8 +90,8 @@ It offers core SRS functionality with useful management tools in a self-containe
 
 1.  **Clone or Download:** Get the project files:
     ```bash
-    git clone https://github.com/your-username/PyAnki-CSV.git # Replace with your repo URL
-    cd PyAnki-CSV
+    git clone https://github.com/FreddyCharles/PyAnki.git # Replace with your repo URL
+    cd PyAnki
     ```
     Alternatively, download the `PyAnki.py` script directly.
 
