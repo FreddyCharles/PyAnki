@@ -1,6 +1,3 @@
-# PyAnki.py
-# --- START OF FILE PyAnki.py ---
-
 import csv
 import datetime
 import random
