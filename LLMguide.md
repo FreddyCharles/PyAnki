@@ -1,6 +1,4 @@
-
-
-**LLM Prompt Guide: Creating Flashcards for PyAnki CSV (Strict Formatting)**
+**LLM Prompt Guide: Creating Flashcards for PyAnki CSV (Strict Formatting for KaTeX)**
 
 **Your Goal:**
 
@@ -39,7 +37,7 @@ A single block of text representing the content of a CSV file.
     *   `reviews`: **Must** be the number `0` (no quotes).
     *   `tags`: **Must** be enclosed in double quotes (`"..."`). Separate multiple tags with commas *inside* the quotes.
     *   `notes`: **Must** be enclosed in double quotes (`"..."`).
-6.  **Math Notation:** Use LaTeX-style math within single dollar signs (`$ ... $`) inside the quoted `front` or `back` fields.
+6.  **Math Notation (CRITICAL for KaTeX):** Use standard LaTeX math notation enclosed within **either** single dollar signs (`$ ... $`) for inline math **or** double dollar signs (`$$ ... $$`) for display/block math. These dollar signs **must be included literally** within the quoted `front` or `back` fields exactly as shown. *Do not* escape the dollar signs themselves.
 7.  **Tags Content:** Tags within the quoted `tags` field should be lowercase, comma-separated, using underscores (`_`) for spaces.
 8.  **Notes Content:** The quoted `notes` field should reference the source (e.g., slide number).
 
@@ -59,15 +57,16 @@ A single block of text representing the content of a CSV file.
         *   *Poor (Just a Number):* `"What was the total thrust calculated in the SLS turbofan example?"`
         *   *Good (Focus on Process/Formula):* `"What is the formula for total thrust ($F$) for a turbofan with separate nozzles, and what was the resulting value in the SLS turbofan example (given $F_c=52,532 N, F_h=18,931 N$)?` (Answer provides formula *and* result).
         *   *Good (Focus on Concept/Decision):* `"For the SLS turbofan example, was the cold nozzle found to be choked or unchoked? Explain based on its calculated pressure ratio (1.65) vs. critical pressure ratio (1.965)."` (Focuses on the *decision* and *reasoning*).
-5.  **Avoid HTML/Unsupported Syntax:** Do not use `<br>` or other HTML. Use `\n` within quoted fields (`front` or `back`) for intended line breaks.
+5.  **Avoid HTML/Unsupported Syntax:** Do not use `<br>` or other HTML. Use `\n` within quoted fields (`front` or `back`) for intended line breaks in the final rendered output.
 6.  **No External References in Q/A:** Do not include instructions like "Refer to slide X" or "See Lecture 4" *within the `front` or `back` fields*. The `notes` field is for source tracking only.
 
 **Example Output Row (Your output rows MUST follow this pattern precisely):**
 
 ```csv
-"What is the formula for Reynolds Number ($Re$) for pipe flow, and what do the variables represent?","The formula is $Re = \frac{\rho v D}{\mu}$.\nWhere:\n$\rho$ = fluid density\n$v$ = fluid velocity\n$D$ = characteristic length (e.g., pipe diameter)\n$\mu$ = dynamic viscosity",,,2.5,0,0,"fluid_dynamics,pipe_flow,definitions,formulas","Slide 12"
+"What is the formula for Reynolds Number ($Re$) for pipe flow, and what do the variables represent?","The formula is $$Re = \frac{\rho v D}{\mu}$$ Where:\n$\rho$ = fluid density\n$v$ = fluid velocity\n$D$ = characteristic length (e.g., pipe diameter)\n$\mu$ = dynamic viscosity",,,2.5,0,0,"fluid_dynamics,pipe_flow,definitions,formulas","Slide 12"
 ```
 *Self-contained: Defines the formula AND the variables within the card itself.*
+*(Note: This example uses `$$...$$` for the main formula and `$ ... $` for inline variables. Both `$..$` and `$$..$$` are valid delimiters to include literally in the CSV fields for KaTeX rendering).*
 
 ---
 
